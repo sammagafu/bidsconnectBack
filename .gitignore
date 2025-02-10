@@ -1,0 +1,32 @@
+
+### Python ###
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyi
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.python-version
+
+### Django ###
+*.log
+*.pot
+*.sqlite3
+db.sqlite3
+media/
+staticfiles/
+.env
+.env*.local
+.env.prod
+.env.dev
+.env.stage
+.env.test
+settings/local.py
