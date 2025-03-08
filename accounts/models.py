@@ -1,11 +1,14 @@
-from django.db import models
+# accounts/models.py
+from django.db import models, transaction
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.core.exceptions import ValidationError
-from django.utils.crypto import get_random_string
-from django.utils.text import slugify
 from django.utils import timezone
+from django.utils.text import slugify
 from django.contrib.auth.models import Group, Permission
-
+import secrets
+import uuid
+from .constants import ROLE_CHOICES, DOCUMENT_TYPE_CHOICES, MAX_COMPANY_USERS  # Ensure MAX_COMPANY_USERS is imported
+from django.conf import settings
 
 class CustomUserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -20,6 +23,12 @@ class CustomUserManager(BaseUserManager):
     def create_superuser(self, email, password, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
+
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have is_staff=True.')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have is_superuser=True.')
+
         return self.create_user(email, password, **extra_fields)
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
@@ -29,23 +38,21 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    
     groups = models.ManyToManyField(
         Group,
         verbose_name='groups',
         blank=True,
-        help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.',
-        related_name="customuser_set",  # Unique related_name
+        related_name="customuser_groups",
         related_query_name="customuser",
     )
     user_permissions = models.ManyToManyField(
         Permission,
         verbose_name='user permissions',
         blank=True,
-        help_text='Specific permissions for this user.',
-        related_name="customuser_set",  # Unique related_name
+        related_name="customuser_permissions",
         related_query_name="customuser",
     )
-
 
     objects = CustomUserManager()
 
@@ -55,49 +62,213 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.email
 
-class Company(models.Model):
-    owner = models.ForeignKey(
-        CustomUser,
-        on_delete=models.CASCADE,
-        related_name="companies"
-    )
-    name = models.CharField(max_length=255, unique=True)
-    slug = models.SlugField(unique=True, blank=True)
-    # ... other fields ...
+# accounts/models.py (Company model only)
+import uuid
+from django.db import models, transaction
+from django.core.exceptions import ValidationError
+from django.utils import timezone
 
+class Company(models.Model):
+    """
+    Represents a company in the system with comprehensive details for identification,
+    operations, legal compliance, and auditing.
+    """
+    
+    # Primary Key
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique identifier for the company (UUID)."
+    )
+    
+    # Ownership
+    owner = models.ForeignKey(
+        'CustomUser',
+        on_delete=models.CASCADE,
+        related_name="companies",
+        help_text="The user who owns this company."
+    )
+    
+    # Basic Information
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="The official name of the company (must be unique)."
+    )
+    slug = models.SlugField(
+        unique=True,
+        blank=True,
+        help_text="URL-friendly identifier for the company (optional, unique)."
+    )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        help_text="A brief description of the company's purpose, services, or industry."
+    )
+    industry = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="The industry the company operates in (e.g., tech, healthcare, finance)."
+    )
+    website = models.URLField(
+        blank=True,
+        null=True,
+        help_text="The company's official website URL."
+    )
+    logo = models.ImageField(
+        upload_to='company_logos/',
+        blank=True,
+        null=True,
+        help_text="The company's logo for branding purposes."
+    )
+    
+    # Contact Information
+    email = models.EmailField(
+        blank=True,
+        null=True,
+        help_text="The company's primary contact email."
+    )
+    phone_number = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        help_text="The company's primary phone number."
+    )
+    address = models.TextField(
+        blank=True,
+        null=True,
+        help_text="The company's physical or mailing address."
+    )
+    
+    # Legal and Compliance Information
+    tax_id = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="The company's tax identification number or Employer Identification Number (EIN)."
+    )
+    registration_number = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="The company's registration number (e.g., for incorporation or business licenses)."
+    )
+    founded_date = models.DateField(
+        blank=True,
+        null=True,
+        help_text="The date the company was founded."
+    )
+    country = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="The country or region where the company is registered."
+    )
+    
+    # Operational Information
+    COMPANY_STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+        ('suspended', 'Suspended'),
+    ]
+    status = models.CharField(
+        max_length=20,
+        choices=COMPANY_STATUS_CHOICES,
+        default='active',
+        help_text="The operational status of the company (e.g., active, inactive, suspended)."
+    )
+    employee_count = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        help_text="The number of employees in the company."
+    )
+    parent_company = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='subsidiaries',
+        help_text="The parent company, if this company is a subsidiary (self-referential)."
+    )
+    
+    # Soft Deletion
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the company was soft-deleted."
+    )
+    
+    # Audit and Tracking Information
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when the company record was created."
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text="Timestamp when the company record was last updated."
+    )
+    created_by = models.ForeignKey(
+        'CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_companies',
+        help_text="The user who created the company record."
+    )
+    
+    # Custom Fields
+    class Meta:
+        """
+        Metadata for the Company model.
+        """
+        verbose_name = "Company"
+        verbose_name_plural = "Companies"
+        ordering = ['name']  # Default ordering by name
+        indexes = [
+            models.Index(fields=['name', 'slug']),  # Index for faster lookups
+            models.Index(fields=['owner']),
+            models.Index(fields=['deleted_at']),
+        ]
+    
+    def __str__(self):
+        """
+        String representation of the Company model.
+        """
+        return self.name
+    
     def clean(self):
-        if self.owner.companies.exclude(id=self.id).count() >= 3:
+        """
+        Validate company-specific constraints.
+        """
+        if self.owner.companies.filter(deleted_at__isnull=True).exclude(id=self.id).count() >= 3:
             raise ValidationError("Maximum of 3 companies per user allowed.")
 
     def save(self, *args, **kwargs):
-        if not self.slug:
-            base_slug = slugify(self.name)
-            unique_slug = base_slug
-            num = 1
-            while Company.objects.filter(slug=unique_slug).exists():
-                unique_slug = f"{base_slug}-{num}"
-                num += 1
-            self.slug = unique_slug
-        
-        super().save(*args, **kwargs)
-        
-        # Automatically create CompanyUser for owner
-        if not self.company_users.filter(user=self.owner).exists():
-            CompanyUser.objects.create(
-                company=self,
-                user=self.owner,
-                role='owner'
-            )
+        """
+        Override save method to enforce validation and auto-populate slug and ownership.
+        """
+        with transaction.atomic():
+            self.full_clean()
+            if not self.slug:
+                self.slug = str(self.id)
+            super().save(*args, **kwargs)
+            
+            if not self.company_users.filter(user=self.owner).exists():
+                CompanyUser.objects.create(
+                    company=self,
+                    user=self.owner,
+                    role='owner'
+                )
 
+    def soft_delete(self):
+        """
+        Mark the company as soft-deleted by setting deleted_at and updating status.
+        """
+        self.deleted_at = timezone.now()
+        self.status = 'inactive'
+        self.save()
+        
 class CompanyUser(models.Model):
-    ROLE_CHOICES = [
-        ('owner', 'Owner'),
-        ('admin', 'Admin'),
-        ('manager', 'Manager'),
-        ('user', 'User'),
-    ]
-    
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='company_users')
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -106,29 +277,30 @@ class CompanyUser(models.Model):
         unique_together = ('company', 'user')
 
     def clean(self):
-        # Prevent role changes for owners
         original = CompanyUser.objects.filter(pk=self.pk).first()
+        
         if original and original.role == 'owner' and self.role != 'owner':
             raise ValidationError("Cannot change owner's role.")
             
-        # Enforce single owner per company
-        if self.role == 'owner' and self.company.company_users.filter(role='owner').exists():
-            raise ValidationError("A company can only have one owner.")
+        if self.role == 'owner':
+            existing_owners = self.company.company_users.filter(role='owner')
+            if self.pk:
+                existing_owners = existing_owners.exclude(pk=self.pk)
+            if existing_owners.exists():
+                raise ValidationError("A company can only have one owner.")
 
-        # User limit validation
-        existing_count = self.company.company_users.count()
-        if self.pk is None and existing_count >= 5:
-            raise ValidationError("Maximum of 5 users per company.")
+        if self._state.adding and self.company.company_users.count() >= MAX_COMPANY_USERS:
+            raise ValidationError(f"Maximum of {MAX_COMPANY_USERS} users per company.")
 
     def save(self, *args, **kwargs):
-        self.clean()
+        self.full_clean()
         super().save(*args, **kwargs)
 
 class CompanyInvitation(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
     invited_email = models.EmailField()
     invited_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
-    role = models.CharField(max_length=20, choices=CompanyUser.ROLE_CHOICES)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
@@ -136,20 +308,24 @@ class CompanyInvitation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.token:
-            self.token = get_random_string(length=64)
+            self.token = secrets.token_urlsafe(48)  # Secure token generation
         if not self.expires_at:
-            self.expires_at = timezone.now() + timezone.timedelta(days=3)
+            self.expires_at = timezone.now() + timezone.timedelta(days=settings.INVITATION_EXPIRY_DAYS)
         super().save(*args, **kwargs)
 
 class CompanyDocument(models.Model):
-    DOCUMENT_TYPE_CHOICES = [
-        # ... choices ...
-    ]
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    document_type = models.CharField(max_length=50)
+    uploaded_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
     document_file = models.FileField(upload_to='company_documents/')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def clean(self):
-        if self.company.owner != self._state.user:
+        if self.uploaded_by != self.company.owner:
             raise ValidationError("Only company owners can upload documents.")
+
+class AuditLog(models.Model):
+    action = models.CharField(max_length=50)
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True,related_name='tenders_audit_logs')
+    timestamp = models.DateTimeField(auto_now_add=True)
+    details = models.JSONField()

@@ -29,4 +29,4 @@ staticfiles/
 .env.dev
 .env.stage
 .env.test
-settings/local.py
+settings/local.py   

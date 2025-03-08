@@ -1,32 +1,31 @@
-# permissions.py
+# accounts/permissions.py
 from rest_framework import permissions
 from .models import Company, CompanyUser
 
 class IsCompanyOwner(permissions.BasePermission):
-    """Allows access only to company owners"""
     def has_permission(self, request, view):
-        # Check for company ownership in URL-based views
+        if not request.user.is_authenticated or not request.user.is_active:
+            return False
+
         if 'company_id' in view.kwargs:
-            company = Company.objects.get(pk=view.kwargs['company_id'])
+            company = Company.objects.get(id=view.kwargs['company_id'], deleted_at__isnull=True)
             return company.owner == request.user
-        return True  # Fallback to object-level permission
+        return True
 
     def has_object_permission(self, request, view, obj):
-        # Handle different object types
         if isinstance(obj, Company):
-            return obj.owner == request.user
+            return obj.owner == request.user and obj.deleted_at is None
         if hasattr(obj, 'company'):
-            return obj.company.owner == request.user
+            return obj.company.owner == request.user and obj.company.deleted_at is None
         return False
 
 class IsCompanyAdminOrOwner(permissions.BasePermission):
-    """Allows company admins and owners"""
     def has_permission(self, request, view):
-        if not request.user.is_authenticated:
+        if not request.user.is_authenticated or not request.user.is_active:
             return False
             
         if 'company_id' in view.kwargs:
-            company = Company.objects.get(pk=view.kwargs['company_id'])
+            company = Company.objects.get(id=view.kwargs['company_id'], deleted_at__isnull=True)
             return CompanyUser.objects.filter(
                 company=company,
                 user=request.user,
@@ -36,28 +35,28 @@ class IsCompanyAdminOrOwner(permissions.BasePermission):
 
     def has_object_permission(self, request, view, obj):
         company = obj.company if hasattr(obj, 'company') else obj
-        return CompanyUser.objects.filter(
+        return company.deleted_at is None and CompanyUser.objects.filter(
             company=company,
             user=request.user,
             role__in=['owner', 'admin']
         ).exists()
 
 class IsCompanyMember(permissions.BasePermission):
-    """Allows any company member"""
     def has_permission(self, request, view):
-        if not request.user.is_authenticated:
+        if not request.user.is_authenticated or not request.user.is_active:
             return False
             
         if 'company_id' in view.kwargs:
             return CompanyUser.objects.filter(
                 company_id=view.kwargs['company_id'],
+                company__deleted_at__isnull=True,
                 user=request.user
             ).exists()
         return True
 
     def has_object_permission(self, request, view, obj):
         company = obj.company if hasattr(obj, 'company') else obj
-        return CompanyUser.objects.filter(
+        return company.deleted_at is None and CompanyUser.objects.filter(
             company=company,
             user=request.user
         ).exists()

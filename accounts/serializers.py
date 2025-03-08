@@ -1,8 +1,12 @@
+# accounts/serializers.py
 from rest_framework import serializers
 from djoser.serializers import UserCreateSerializer
 from django.utils import timezone
+from django.contrib.auth.password_validation import validate_password
 from .models import CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument
 from .permissions import IsCompanyAdminOrOwner
+from .constants import ROLE_CHOICES, VALID_FILE_EXTENSIONS, MAX_FILE_SIZE
+import os
 
 class CustomUserCreateSerializer(UserCreateSerializer):
     invitation_token = serializers.CharField(required=False, write_only=True)
@@ -15,15 +19,21 @@ class CustomUserCreateSerializer(UserCreateSerializer):
             'password': {'write_only': True},
         }
 
+    def validate_password(self, value):
+        validate_password(value)
+        return value
+
     def validate_invitation_token(self, value):
-        if value:
-            if not CompanyInvitation.objects.filter(token=value).exists():
-                raise serializers.ValidationError("Invalid invitation token.")
+        if value and not CompanyInvitation.objects.filter(token=value).exists():
+            raise serializers.ValidationError({"invitation_token": "Invalid invitation token."})
         return value
 
     def create(self, validated_data):
         invitation_token = validated_data.pop('invitation_token', None)
+        phone_number = validated_data.pop('phone_number')
         user = super().create(validated_data)
+        user.phone_number = phone_number
+        user.save()
         
         if invitation_token:
             try:
@@ -33,23 +43,17 @@ class CustomUserCreateSerializer(UserCreateSerializer):
                     accepted=False,
                     expires_at__gt=timezone.now()
                 )
-                
-                # Create company membership
                 CompanyUser.objects.create(
                     company=invitation.company,
                     user=user,
                     role=invitation.role
                 )
-                
-                # Mark invitation as accepted
                 invitation.accepted = True
                 invitation.save(update_fields=['accepted'])
-                
             except CompanyInvitation.DoesNotExist:
                 raise serializers.ValidationError({
                     'invitation_token': 'Invalid or expired invitation token.'
                 })
-                
         return user
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
@@ -66,34 +70,44 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 class CompanySerializer(serializers.ModelSerializer):
     owner = serializers.HiddenField(default=serializers.CurrentUserDefault())
     slug = serializers.SlugField(read_only=True)
+    owner_email = serializers.SerializerMethodField()
+    created_by = serializers.PrimaryKeyRelatedField(
+        queryset=CustomUser.objects.all(),
+        default=serializers.CurrentUserDefault(),
+        write_only=True
+    )
 
     class Meta:
         model = Company
         fields = (
-            'id', 'name', 'slug', 'address', 'city', 'state', 'postal_code', 
-            'country', 'description', 'business_license', 
-            'tax_identification_number', 'website', 'logo', 'created_at', 'owner'
+            'id', 'name', 'slug', 'description', 'industry', 'website', 'logo',
+            'email', 'phone_number', 'address', 'tax_id', 'registration_number',
+            'founded_date', 'country', 'status', 'employee_count', 'parent_company',
+            'owner', 'owner_email', 'created_at', 'updated_at', 'created_by'
         )
-        read_only_fields = ('created_at',)
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_owner_email(self, obj):
+        return obj.owner.email
 
     def validate_name(self, value):
-        if Company.objects.filter(name__iexact=value).exists():
-            raise serializers.ValidationError("A company with this name already exists.")
+        if Company.objects.filter(name__iexact=value, deleted_at__isnull=True).exists():
+            raise serializers.ValidationError({"name": "A company with this name already exists."})
         return value
 
 class CompanyUserSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
+    user = serializers.PrimaryKeyRelatedField(queryset=CustomUser.objects.all())
 
     class Meta:
         model = CompanyUser
         fields = ('id', 'company', 'user', 'user_email', 'company_name', 'role')
-        read_only_fields = ('id', 'company', 'user', 'user_email', 'company_name')
+        read_only_fields = ('id', 'company', 'user_email', 'company_name')
 
     def validate_role(self, value):
-        if self.instance and self.instance.role == 'owner':
-            if value != 'owner':
-                raise serializers.ValidationError("Cannot change owner's role.")
+        if self.instance and self.instance.role == 'owner' and value != 'owner':
+            raise serializers.ValidationError({"role": "Cannot change owner's role."})
         return value
 
 class CompanyInvitationSerializer(serializers.ModelSerializer):
@@ -108,38 +122,21 @@ class CompanyInvitationSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         company = attrs['company']
         
-        # Check inviter permissions
-        if not IsCompanyAdminOrOwner().has_object_permission(
-            self.context['request'], self, company
-        ):
-            raise serializers.ValidationError(
-                "You don't have permission to invite users to this company."
-            )
+        if not IsCompanyAdminOrOwner().has_object_permission(self.context['request'], self, company):
+            raise serializers.ValidationError({"company": "You don't have permission to invite users to this company."})
 
-        # Check existing users
-        if CompanyUser.objects.filter(
-            company=company,
-            user__email=attrs['invited_email']
-        ).exists():
-            raise serializers.ValidationError(
-                "This user is already part of the company."
-            )
+        if CompanyUser.objects.filter(company=company, user__email=attrs['invited_email']).exists():
+            raise serializers.ValidationError({"invited_email": "This user is already part of the company."})
 
-        # Check pending invitations
         if CompanyInvitation.objects.filter(
             company=company,
             invited_email=attrs['invited_email'],
             accepted=False
         ).exists():
-            raise serializers.ValidationError(
-                "An invitation is already pending for this email."
-            )
+            raise serializers.ValidationError({"invited_email": "An invitation is already pending for this email."})
 
-        # Role validation
         if attrs['role'] == 'owner':
-            raise serializers.ValidationError(
-                "Cannot invite users as owners. Owner status is automatic."
-            )
+            raise serializers.ValidationError({"role": "Cannot invite users as owners."})
 
         return attrs
 
@@ -155,11 +152,11 @@ class CompanyDocumentSerializer(serializers.ModelSerializer):
         }
 
     def validate_document_file(self, value):
-        max_size = 10 * 1024 * 1024  # 10MB
-        if value.size > max_size:
-            raise serializers.ValidationError(
-                f"File size exceeds maximum allowed size of {max_size//1024//1024}MB"
-            )
+        if value.size > MAX_FILE_SIZE:
+            raise serializers.ValidationError({"document_file": f"File size exceeds maximum allowed size of {MAX_FILE_SIZE//1024//1024}MB"})
+        ext = os.path.splitext(value.name)[1].lower()
+        if ext not in VALID_FILE_EXTENSIONS:
+            raise serializers.ValidationError({"document_file": "Unsupported file format."})
         return value
 
     def create(self, validated_data):

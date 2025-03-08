@@ -1,4 +1,4 @@
-# views.py
+# accounts/views.py
 from django.db import transaction
 from django.utils import timezone
 from django.core.mail import send_mail
@@ -7,7 +7,8 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from .models import Company, CompanyUser, CompanyInvitation, CompanyDocument
+from rest_framework.throttling import UserRateThrottle
+from .models import Company, CompanyUser, CompanyInvitation, CompanyDocument, AuditLog
 from .serializers import (
     CompanySerializer,
     CompanyUserSerializer,
@@ -21,13 +22,21 @@ from .permissions import IsCompanyOwner, IsCompanyAdminOrOwner, IsCompanyMember
 class UserRegistrationView(generics.CreateAPIView):
     serializer_class = CustomUserCreateSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [UserRateThrottle]
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        user = self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
+        
+        AuditLog.objects.create(
+            action='user_registration',
+            user=user,
+            details={'email': user.email}
+        )
+        
         return Response(
             {'detail': 'User registered successfully'}, 
             status=status.HTTP_201_CREATED, 
@@ -37,96 +46,163 @@ class UserRegistrationView(generics.CreateAPIView):
 class CompanyListView(generics.ListCreateAPIView):
     serializer_class = CompanySerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
-        return self.request.user.companies.all()
+        return self.request.user.companies.filter(deleted_at__isnull=True).select_related('owner')
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        with transaction.atomic():
-            company = serializer.save(owner=self.request.user)
-            # Additional setup for new company can be added here
+        company = serializer.save(owner=self.request.user, created_by=self.request.user)
+        AuditLog.objects.create(
+            action='company_creation',
+            user=self.request.user,
+            details={'company_id': str(company.id), 'name': company.name}
+        )
 
 class CompanyDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Company.objects.all()
+    queryset = Company.objects.filter(deleted_at__isnull=True)  # Updated from is_deleted=False
     serializer_class = CompanySerializer
     permission_classes = [IsCompanyOwner]
+    lookup_field = 'id'
+    throttle_classes = [UserRateThrottle]
 
-    def get_object(self):
-        company = super().get_object()
-        if company.owner != self.request.user:
-            raise PermissionDenied("You don't own this company")
-        return company
+    def perform_destroy(self, instance):
+        instance.soft_delete()
+        AuditLog.objects.create(
+            action='company_deletion',
+            user=self.request.user,
+            details={'company_id': str(instance.id), 'name': instance.name}
+        )
 
 class CompanyUserManagementView(generics.ListCreateAPIView):
     serializer_class = CompanyUserSerializer
     permission_classes = [IsCompanyAdminOrOwner]
+    throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
         company_id = self.kwargs['company_id']
-        return CompanyUser.objects.filter(company_id=company_id)
+        return CompanyUser.objects.filter(company_id=company_id, company__deleted_at__isnull=True).select_related('user', 'company')
 
     @transaction.atomic
     def perform_create(self, serializer):
-        company = get_object_or_404(Company, id=self.kwargs['company_id'])
-        if company.company_users.count() >= 5:
-            raise ValidationError("Maximum of 5 users per company reached")
+        company = get_object_or_404(Company, id=self.kwargs['company_id'], deleted_at__isnull=True)
+        user = serializer.validated_data.get('user')
         
-        serializer.save(company=company)
+        if CompanyUser.objects.filter(company=company, user=user).exists():
+            raise ValidationError({"user": "User already exists in this company"})
         
+        company_user = serializer.save(company=company)
+        AuditLog.objects.create(
+            action='company_user_added',
+            user=self.request.user,
+            details={'company_id': str(company.id), 'user_id': user.id}
+        )
+
 class CompanyUserDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CompanyUserSerializer
     permission_classes = [IsCompanyAdminOrOwner]
-    queryset = CompanyUser.objects.all()
+    queryset = CompanyUser.objects.filter(company__deleted_at__isnull=True)
+    lookup_field = 'id'
+    throttle_classes = [UserRateThrottle]
 
     def get_object(self):
         obj = super().get_object()
         if obj.role == 'owner':
-            raise PermissionDenied("Cannot modify company owner")
+            raise PermissionDenied({"detail": "Cannot modify company owner"})
         return obj
 
-class InvitationListView(generics.ListAPIView):
+class InvitationListView(generics.ListCreateAPIView):
     serializer_class = CompanyInvitationSerializer
     permission_classes = [IsCompanyAdminOrOwner]
+    throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
         company_id = self.kwargs['company_id']
         return CompanyInvitation.objects.filter(
-            company_id=company_id, 
+            company_id=company_id,
+            company__deleted_at__isnull=True,
             expires_at__gt=timezone.now()
+        ).select_related('company', 'invited_by')
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        company = get_object_or_404(Company, id=self.kwargs['company_id'], deleted_at__isnull=True)
+        role = serializer.validated_data.get('role')
+        
+        if role == 'owner' and company.company_users.filter(role='owner').exists():
+            raise ValidationError({"role": "Company already has an owner"})
+        
+        invitation = serializer.save(
+            company=company,
+            invited_by=self.request.user,
+            invited_email=serializer.validated_data['invited_email']
+        )
+        
+        send_mail(
+            subject="Company Invitation",
+            message=f"You have been invited to join {company.name}. Accept here: {settings.SITE_URL}/accept-invitation/{invitation.token}/",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[invitation.invited_email],
+            fail_silently=False,
+        )
+        
+        AuditLog.objects.create(
+            action='invitation_sent',
+            user=self.request.user,
+            details={'company_id': str(company.id), 'invited_email': invitation.invited_email}
         )
 
 class InvitationDetailView(generics.RetrieveDestroyAPIView):
     serializer_class = CompanyInvitationSerializer
     permission_classes = [IsCompanyAdminOrOwner]
-    queryset = CompanyInvitation.objects.all()
+    queryset = CompanyInvitation.objects.filter(company__deleted_at__isnull=True)
+    lookup_field = 'id'
+    throttle_classes = [UserRateThrottle]
 
 class DocumentManagementView(generics.ListCreateAPIView):
     serializer_class = CompanyDocumentSerializer
-    permission_classes = [IsCompanyAdminOrOwner]
+    permission_classes = [IsCompanyOwner]
+    throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
+        company_id = self.kwargs['company_id']
         return CompanyDocument.objects.filter(
-            company_id=self.kwargs['company_id']
-        )
+            company_id=company_id,
+            company__deleted_at__isnull=True
+        ).select_related('company', 'uploaded_by')
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        company = get_object_or_404(Company, id=self.kwargs['company_id'])
-        serializer.save(company=company, uploaded_by=self.request.user)
+        company = get_object_or_404(Company, id=self.kwargs['company_id'], deleted_at__isnull=True)
+        if company.owner != self.request.user:
+            raise PermissionDenied({"detail": "Only company owner can upload documents"})
+        
+        document = serializer.save(company=company, uploaded_by=self.request.user)
+        AuditLog.objects.create(
+            action='document_uploaded',
+            user=self.request.user,
+            details={'company_id': str(company.id), 'document_id': str(document.id)}
+        )
 
 class DocumentDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CompanyDocumentSerializer
-    permission_classes = [IsCompanyAdminOrOwner]
-    queryset = CompanyDocument.objects.all()
+    permission_classes = [IsCompanyOwner]
+    queryset = CompanyDocument.objects.filter(company__deleted_at__isnull=True)
+    lookup_field = 'id'
+    throttle_classes = [UserRateThrottle]
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileUpdateSerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
 
     def get_object(self):
         return self.request.user
 
 class InvitationAcceptanceView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
 
     @transaction.atomic
     def post(self, request, token):
@@ -135,18 +211,28 @@ class InvitationAcceptanceView(generics.GenericAPIView):
             token=token,
             invited_email=request.user.email,
             accepted=False,
-            expires_at__gt=timezone.now()
+            expires_at__gt=timezone.now(),
+            company__deleted_at__isnull=True
         )
         
         if CompanyUser.objects.filter(company=invitation.company, user=request.user).exists():
-            raise ValidationError("You already belong to this company")
+            raise ValidationError({"detail": "You already belong to this company"})
         
-        CompanyUser.objects.create(
+        if invitation.role == 'owner' and invitation.company.company_users.filter(role='owner').exists():
+            raise ValidationError({"role": "Company already has an owner"})
+        
+        company_user = CompanyUser.objects.create(
             company=invitation.company,
             user=request.user,
             role=invitation.role
         )
         invitation.accepted = True
         invitation.save()
+        
+        AuditLog.objects.create(
+            action='invitation_accepted',
+            user=request.user,
+            details={'company_id': str(invitation.company.id), 'role': invitation.role}
+        )
         
         return Response({"detail": "Invitation accepted successfully"})

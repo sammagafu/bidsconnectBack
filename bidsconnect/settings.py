@@ -89,7 +89,7 @@ WSGI_APPLICATION = 'bidsconnect.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': ':memory:',
     }
 }
 
@@ -139,7 +139,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework.authentication.TokenAuthentication',
-        # (...)
     ),
 }
 
@@ -154,3 +153,4 @@ DJOSER = {
     # 'SEND_ACTIVATION_EMAIL': True,
     'SERIALIZERS': {},
 }
+INVITATION_EXPIRY_DAYS = 7
