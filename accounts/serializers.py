@@ -1,4 +1,3 @@
-# accounts/serializers.py
 from rest_framework import serializers
 from djoser.serializers import UserCreateSerializer
 from django.utils import timezone
@@ -17,6 +16,7 @@ class CustomUserCreateSerializer(UserCreateSerializer):
         fields = ('id', 'email', 'phone_number', 'password', 'invitation_token')
         extra_kwargs = {
             'password': {'write_only': True},
+            'email': {'required': True},
         }
 
     def validate_password(self, value):
@@ -30,10 +30,17 @@ class CustomUserCreateSerializer(UserCreateSerializer):
 
     def create(self, validated_data):
         invitation_token = validated_data.pop('invitation_token', None)
-        phone_number = validated_data.pop('phone_number')
-        user = super().create(validated_data)
-        user.phone_number = phone_number
-        user.save()
+        phone_number = validated_data.pop('phone_number', None)
+        
+        # Create user using CustomUserManager
+        user = CustomUser.objects.create_user(
+            email=validated_data['email'],
+            password=validated_data['password']
+        )
+        
+        if phone_number:
+            user.phone_number = phone_number
+            user.save()
         
         if invitation_token:
             try:
@@ -112,6 +119,10 @@ class CompanyUserSerializer(serializers.ModelSerializer):
 
 class CompanyInvitationSerializer(serializers.ModelSerializer):
     invited_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    company = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.filter(deleted_at__isnull=True),
+        required=False
+    )
 
     class Meta:
         model = CompanyInvitation
@@ -120,7 +131,11 @@ class CompanyInvitationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         user = self.context['request'].user
-        company = attrs['company']
+        company_id = self.context['view'].kwargs.get('company_id')
+        if not company_id:
+            raise serializers.ValidationError({"company": "Company ID must be provided in the URL."})
+        
+        company = Company.objects.get(id=company_id, deleted_at__isnull=True)
         
         if not IsCompanyAdminOrOwner().has_object_permission(self.context['request'], self, company):
             raise serializers.ValidationError({"company": "You don't have permission to invite users to this company."})
@@ -138,6 +153,7 @@ class CompanyInvitationSerializer(serializers.ModelSerializer):
         if attrs['role'] == 'owner':
             raise serializers.ValidationError({"role": "Cannot invite users as owners."})
 
+        attrs['company'] = company
         return attrs
 
 class CompanyDocumentSerializer(serializers.ModelSerializer):

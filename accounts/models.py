@@ -1,13 +1,11 @@
-# accounts/models.py
+import uuid
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from django.utils.text import slugify
 from django.contrib.auth.models import Group, Permission
 import secrets
-import uuid
-from .constants import ROLE_CHOICES, DOCUMENT_TYPE_CHOICES, MAX_COMPANY_USERS  # Ensure MAX_COMPANY_USERS is imported
+from .constants import ROLE_CHOICES, DOCUMENT_TYPE_CHOICES, MAX_COMPANY_USERS
 from django.conf import settings
 
 class CustomUserManager(BaseUserManager):
@@ -61,12 +59,6 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
-
-# accounts/models.py (Company model only)
-import uuid
-from django.db import models, transaction
-from django.core.exceptions import ValidationError
-from django.utils import timezone
 
 class Company(models.Model):
     """
@@ -215,37 +207,24 @@ class Company(models.Model):
         help_text="The user who created the company record."
     )
     
-    # Custom Fields
     class Meta:
-        """
-        Metadata for the Company model.
-        """
         verbose_name = "Company"
         verbose_name_plural = "Companies"
-        ordering = ['name']  # Default ordering by name
+        ordering = ['name']
         indexes = [
-            models.Index(fields=['name', 'slug']),  # Index for faster lookups
+            models.Index(fields=['name', 'slug']),
             models.Index(fields=['owner']),
             models.Index(fields=['deleted_at']),
         ]
     
     def __str__(self):
-        """
-        String representation of the Company model.
-        """
         return self.name
     
     def clean(self):
-        """
-        Validate company-specific constraints.
-        """
         if self.owner.companies.filter(deleted_at__isnull=True).exclude(id=self.id).count() >= 3:
             raise ValidationError("Maximum of 3 companies per user allowed.")
 
     def save(self, *args, **kwargs):
-        """
-        Override save method to enforce validation and auto-populate slug and ownership.
-        """
         with transaction.atomic():
             self.full_clean()
             if not self.slug:
@@ -260,13 +239,10 @@ class Company(models.Model):
                 )
 
     def soft_delete(self):
-        """
-        Mark the company as soft-deleted by setting deleted_at and updating status.
-        """
         self.deleted_at = timezone.now()
         self.status = 'inactive'
         self.save()
-        
+
 class CompanyUser(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='company_users')
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
@@ -308,9 +284,9 @@ class CompanyInvitation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.token:
-            self.token = secrets.token_urlsafe(48)  # Secure token generation
+            self.token = secrets.token_urlsafe(48)
         if not self.expires_at:
-            self.expires_at = timezone.now() + timezone.timedelta(days=settings.INVITATION_EXPIRY_DAYS)
+            self.expires_at = timezone.now() + timezone.timedelta(days=getattr(settings, 'INVITATION_EXPIRY_DAYS', 7))
         super().save(*args, **kwargs)
 
 class CompanyDocument(models.Model):
@@ -326,6 +302,11 @@ class CompanyDocument(models.Model):
 
 class AuditLog(models.Model):
     action = models.CharField(max_length=50)
-    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True,related_name='tenders_audit_logs')
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='accounts_audit_logs'
+    )
     timestamp = models.DateTimeField(auto_now_add=True)
     details = models.JSONField()

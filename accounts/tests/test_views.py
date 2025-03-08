@@ -7,14 +7,18 @@ from ..constants import ROLE_CHOICES
 
 class UserRegistrationViewTests(APITestCase):
     def test_register_user(self):
-        url = reverse('user-register')
+        url = '/api/v1/accounts/users/'  # Adjusted to match Djoser under api/v1/accounts/
         data = {
             "email": "test@example.com",
             "phone_number": "1234567890",
             "password": "TestPass123!"
         }
         response = self.client.post(url, data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        if response.status_code != status.HTTP_201_CREATED:
+            print("Response status:", response.status_code)
+            print("Response content:", response.content.decode() if hasattr(response, 'content') else "No content")
+            print("Request URL:", response.request['PATH_INFO'])
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, f"Failed with status: {response.status_code}")
         self.assertEqual(CustomUser.objects.count(), 1)
 
 class CompanyListViewTests(APITestCase):
@@ -27,7 +31,7 @@ class CompanyListViewTests(APITestCase):
         self.client.force_authenticate(user=self.user)
 
     def test_create_company(self):
-        url = reverse('company-list')
+        url = reverse('company-list')  # No namespace needed if not using it
         data = {"name": "Test Co", "description": "Test description"}
         response = self.client.post(url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -111,5 +115,7 @@ class InvitationListViewTests(APITestCase):
         url = reverse('invitation-list', kwargs={'company_id': str(self.company.id)})
         data = {"invited_email": "invited@example.com", "role": "admin"}
         response = self.client.post(url, data, format='json')
+        if response.status_code != status.HTTP_201_CREATED:
+            print("Response data:", response.data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         self.assertEqual(CompanyInvitation.objects.count(), 1)

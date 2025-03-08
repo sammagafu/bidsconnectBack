@@ -1,4 +1,3 @@
-# accounts/views.py
 from django.db import transaction
 from django.utils import timezone
 from django.core.mail import send_mail
@@ -19,30 +18,6 @@ from .serializers import (
 )
 from .permissions import IsCompanyOwner, IsCompanyAdminOrOwner, IsCompanyMember
 
-class UserRegistrationView(generics.CreateAPIView):
-    serializer_class = CustomUserCreateSerializer
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [UserRateThrottle]
-
-    @transaction.atomic
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        
-        AuditLog.objects.create(
-            action='user_registration',
-            user=user,
-            details={'email': user.email}
-        )
-        
-        return Response(
-            {'detail': 'User registered successfully'}, 
-            status=status.HTTP_201_CREATED, 
-            headers=headers
-        )
-
 class CompanyListView(generics.ListCreateAPIView):
     serializer_class = CompanySerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -61,7 +36,7 @@ class CompanyListView(generics.ListCreateAPIView):
         )
 
 class CompanyDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Company.objects.filter(deleted_at__isnull=True)  # Updated from is_deleted=False
+    queryset = Company.objects.filter(deleted_at__isnull=True)
     serializer_class = CompanySerializer
     permission_classes = [IsCompanyOwner]
     lookup_field = 'id'
@@ -127,21 +102,11 @@ class InvitationListView(generics.ListCreateAPIView):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        company = get_object_or_404(Company, id=self.kwargs['company_id'], deleted_at__isnull=True)
-        role = serializer.validated_data.get('role')
-        
-        if role == 'owner' and company.company_users.filter(role='owner').exists():
-            raise ValidationError({"role": "Company already has an owner"})
-        
-        invitation = serializer.save(
-            company=company,
-            invited_by=self.request.user,
-            invited_email=serializer.validated_data['invited_email']
-        )
+        invitation = serializer.save(invited_by=self.request.user)
         
         send_mail(
             subject="Company Invitation",
-            message=f"You have been invited to join {company.name}. Accept here: {settings.SITE_URL}/accept-invitation/{invitation.token}/",
+            message=f"You have been invited to join {invitation.company.name}. Accept here: {settings.SITE_URL}/accept-invitation/{invitation.token}/",
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[invitation.invited_email],
             fail_silently=False,
@@ -150,7 +115,7 @@ class InvitationListView(generics.ListCreateAPIView):
         AuditLog.objects.create(
             action='invitation_sent',
             user=self.request.user,
-            details={'company_id': str(company.id), 'invited_email': invitation.invited_email}
+            details={'company_id': str(invitation.company.id), 'invited_email': invitation.invited_email}
         )
 
 class InvitationDetailView(generics.RetrieveDestroyAPIView):

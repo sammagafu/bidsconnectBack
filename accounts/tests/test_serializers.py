@@ -15,10 +15,13 @@ class CustomUserCreateSerializerTests(TestCase):
         data = {
             "email": "test@example.com",
             "phone_number": "1234567890",
-            "password": "TestPass123!"
+            "password": "TestPass123!"  # Reverted to original
         }
         serializer = CustomUserCreateSerializer(data=data)
-        self.assertTrue(serializer.is_valid())
+        is_valid = serializer.is_valid(raise_exception=False)
+        if not is_valid:
+            print("Validation errors:", serializer.errors)  # Debug output
+        self.assertTrue(is_valid, f"Serializer validation failed: {serializer.errors}")
         user = serializer.save()
         self.assertEqual(user.email, "test@example.com")
         self.assertEqual(user.phone_number, "1234567890")

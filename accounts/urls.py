@@ -1,29 +1,16 @@
 # accounts/urls.py
 from django.urls import path
-from .views import (
-    UserRegistrationView,
-    CompanyListView,
-    CompanyDetailView,
-    CompanyUserManagementView,
-    InvitationListView,
-    DocumentManagementView,
-    InvitationAcceptanceView,
-    UserProfileView,
-    CompanyUserDetailView,
-    InvitationDetailView,
-    DocumentDetailView,
-)
+from . import views
 
 urlpatterns = [
-    path('register/', UserRegistrationView.as_view(), name='user-register'),
-    path('companies/', CompanyListView.as_view(), name='company-list'),
-    path('companies/<uuid:id>/', CompanyDetailView.as_view(), name='company-detail'),
-    path('companies/<uuid:company_id>/users/', CompanyUserManagementView.as_view(), name='company-users'),
-    path('companies/<uuid:company_id>/users/<uuid:pk>/', CompanyUserDetailView.as_view(), name='company-user-detail'),
-    path('companies/<uuid:company_id>/invitations/', InvitationListView.as_view(), name='invitation-list'),
-    path('companies/<uuid:company_id>/invitations/<uuid:pk>/', InvitationDetailView.as_view(), name='invitation-detail'),
-    path('companies/<uuid:company_id>/documents/', DocumentManagementView.as_view(), name='document-list'),
-    path('companies/<uuid:company_id>/documents/<uuid:pk>/', DocumentDetailView.as_view(), name='document-detail'),
-    path('accept-invitation/<str:token>/', InvitationAcceptanceView.as_view(), name='accept-invitation'),
-    path('profile/', UserProfileView.as_view(), name='user-profile'),
+    path('companies/', views.CompanyListView.as_view(), name='company-list'),
+    path('companies/<uuid:id>/', views.CompanyDetailView.as_view(), name='company-detail'),
+    path('companies/<uuid:company_id>/users/', views.CompanyUserManagementView.as_view(), name='company-users'),
+    path('companies/<uuid:company_id>/users/<int:id>/', views.CompanyUserDetailView.as_view(), name='company-user-detail'),
+    path('companies/<uuid:company_id>/invitations/', views.InvitationListView.as_view(), name='invitation-list'),
+    path('companies/<uuid:company_id>/invitations/<int:id>/', views.InvitationDetailView.as_view(), name='invitation-detail'),
+    path('companies/<uuid:company_id>/documents/', views.DocumentManagementView.as_view(), name='document-list'),
+    path('companies/<uuid:company_id>/documents/<int:id>/', views.DocumentDetailView.as_view(), name='document-detail'),
+    path('profile/', views.UserProfileView.as_view(), name='user-profile'),
+    path('accept-invitation/<str:token>/', views.InvitationAcceptanceView.as_view(), name='accept-invitation'),
 ]

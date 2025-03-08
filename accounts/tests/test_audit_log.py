@@ -31,4 +31,3 @@ class AuditLogTests(APITestCase):
         log = AuditLog.objects.get(action='document_uploaded')
         self.assertEqual(log.user, self.user)
         self.assertEqual(log.details['company_id'], str(self.company.id))
-        
