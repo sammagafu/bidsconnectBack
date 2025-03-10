@@ -1,22 +1,32 @@
 # tenders/views.py
-from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework import generics, status, filters
+from rest_framework.permissions import IsAuthenticated, IsAdminUser,AllowAny
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.pagination import PageNumberPagination
+from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from .models import (
     Category, SubCategory, ProcurementProcess,
     Tender, TenderDocument, TenderSubscription,
-    NotificationPreference, TenderNotification
+    NotificationPreference, TenderNotification,
+    TenderStatusHistory
 )
 from .serializers import (
     CategorySerializer, SubCategorySerializer, ProcurementProcessSerializer,
     TenderSerializer, TenderDocumentSerializer,
-    # BidSerializer, BidDocumentSerializer, EvaluationCriterionSerializer,
-    # EvaluationResponseSerializer, ContractSerializer, AuditLogSerializer
+    TenderSubscriptionSerializer, NotificationPreferenceSerializer,
+    TenderNotificationSerializer, TenderStatusHistorySerializer
 )
+
+# Custom Pagination Class
+class TenderPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 # Category Views
 class CategoryListCreateView(generics.ListCreateAPIView):
@@ -31,6 +41,7 @@ class CategoryRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticated, IsAdminUser]
+    lookup_field = 'slug'
 
 # SubCategory Views
 class SubCategoryListCreateView(generics.ListCreateAPIView):
@@ -45,6 +56,7 @@ class SubCategoryRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView
     queryset = SubCategory.objects.all()
     serializer_class = SubCategorySerializer
     permission_classes = [IsAuthenticated, IsAdminUser]
+    lookup_field = 'slug'
 
 # ProcurementProcess Views
 class ProcurementProcessListCreateView(generics.ListCreateAPIView):
@@ -59,40 +71,47 @@ class ProcurementProcessRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroy
     queryset = ProcurementProcess.objects.all()
     serializer_class = ProcurementProcessSerializer
     permission_classes = [IsAuthenticated, IsAdminUser]
+    lookup_field = 'slug'
 
 # Tender Views
 class TenderListCreateView(generics.ListCreateAPIView):
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
-    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['status', 'category__slug', 'subcategory__slug', 'procurement_process__slug']
+    search_fields = ['title', 'slug', 'description', 'reference_number']
+    pagination_class = TenderPagination
+
+    def get_permissions(self):
+        # Allow anyone to list tenders (GET), require authentication for creating (POST)
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Filter tenders based on status for non-admin users
-        if not self.request.user.is_staff:
-            queryset = queryset.filter(status='published')
-        # Add search functionality
-        search_query = self.request.query_params.get('search', None)
-        if search_query:
-            queryset = queryset.filter(
-                Q(title__icontains=search_query) |
-                Q(description__icontains=search_query) |
-                Q(reference_number__icontains=search_query)
-            )
-        return queryset
+        # Staff users see all tenders when authenticated
+        if self.request.user.is_authenticated and self.request.user.is_staff:
+            return queryset
+        # Everyone (authenticated or not) sees only published tenders
+        return queryset.filter(status='published')
 
     def perform_create(self, serializer):
-        # Set created_by to the current user
+        # Only authenticated users can create tenders
         tender = serializer.save(created_by=self.request.user)
-        # Add the creator to the evaluation committee if specified
         evaluation_committee = self.request.data.get('evaluation_committee', [])
         if evaluation_committee:
             tender.evaluation_committee.set(evaluation_committee)
-
+        TenderStatusHistory.objects.create(
+            tender=tender,
+            status=tender.status,
+            changed_by=self.request.user
+        )
 class TenderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
     permission_classes = [IsAuthenticated]
+    lookup_field = 'slug'
 
     def get_permissions(self):
         if self.request.method in ['PUT', 'PATCH', 'DELETE']:
@@ -101,18 +120,44 @@ class TenderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         tender = self.get_object()
-        # Prevent updates to completed tenders
         if tender.status in ['awarded', 'closed', 'canceled']:
             return Response(
                 {"detail": "Cannot modify a completed tender."},
                 status=status.HTTP_403_FORBIDDEN
             )
-        # Handle status changes
+        
         new_status = self.request.data.get('status', tender.status)
-        if new_status != tender.status and new_status in ['published', 'canceled']:
+        valid_transitions = {
+            'draft': ['pending', 'canceled'],
+            'pending': ['published', 'canceled'],
+            'published': ['evaluation', 'canceled'],
+            'evaluation': ['awarded', 'canceled'],
+            'awarded': ['closed'],
+            'closed': [],
+            'canceled': []
+        }
+        
+        if new_status != tender.status:
+            if new_status not in valid_transitions.get(tender.status, []):
+                return Response(
+                    {"detail": f"Cannot transition from {tender.status} to {new_status}."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             serializer.save(last_status_change=timezone.now())
+            TenderStatusHistory.objects.create(
+                tender=tender,
+                status=new_status,
+                changed_by=self.request.user
+            )
         else:
             serializer.save()
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, slug=None):
+        tender = self.get_object()
+        history = tender.status_history.all()
+        serializer = TenderStatusHistorySerializer(history, many=True)
+        return Response(serializer.data)
 
 # TenderDocument Views
 class TenderDocumentListCreateView(generics.ListCreateAPIView):
@@ -135,9 +180,10 @@ class TenderDocumentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIV
     permission_classes = [IsAuthenticated, IsAdminUser]
 
 # TenderSubscription Views
-class TenderSubscriptionListCreateView(generics.ListCreateAPIView):
-    serializer_class = TenderSubscriptionSerializer  # You'll need to create this serializer
+class TenderSubscriptionViewSet(ModelViewSet):
+    serializer_class = TenderSubscriptionSerializer
     permission_classes = [IsAuthenticated]
+    lookup_field = 'slug'
 
     def get_queryset(self):
         return TenderSubscription.objects.filter(user=self.request.user)
@@ -145,16 +191,19 @@ class TenderSubscriptionListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
-class TenderSubscriptionRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    serializer_class = TenderSubscriptionSerializer  # You'll need to create this serializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return TenderSubscription.objects.filter(user=self.request.user)
+    @action(detail=True, methods=['post'])
+    def toggle_active(self, request, slug=None):
+        subscription = self.get_object()
+        subscription.is_active = not subscription.is_active
+        subscription.save()
+        return Response(
+            {"detail": f"Subscription {'activated' if subscription.is_active else 'deactivated'}."},
+            status=status.HTTP_200_OK
+        )
 
 # NotificationPreference Views
 class NotificationPreferenceRetrieveUpdateView(generics.RetrieveUpdateAPIView):
-    serializer_class = NotificationPreferenceSerializer  # You'll need to create this serializer
+    serializer_class = NotificationPreferenceSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
@@ -163,7 +212,7 @@ class NotificationPreferenceRetrieveUpdateView(generics.RetrieveUpdateAPIView):
 
 # TenderNotification Views
 class TenderNotificationListView(generics.ListAPIView):
-    serializer_class = TenderNotificationSerializer  # You'll need to create this serializer
+    serializer_class = TenderNotificationSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -172,8 +221,8 @@ class TenderNotificationListView(generics.ListAPIView):
 # Custom API Views
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def publish_tender(request, pk):
-    tender = get_object_or_404(Tender, pk=pk)
+def publish_tender(request, slug):
+    tender = get_object_or_404(Tender, slug=slug)
     if not request.user.is_staff and tender.created_by != request.user:
         return Response(
             {"detail": "You don't have permission to publish this tender."},
@@ -187,51 +236,9 @@ def publish_tender(request, pk):
     tender.status = 'published'
     tender.last_status_change = timezone.now()
     tender.save()
+    TenderStatusHistory.objects.create(
+        tender=tender,
+        status='published',
+        changed_by=request.user
+    )
     return Response({"detail": "Tender published successfully."}, status=status.HTTP_200_OK)
-
-# Serializers that need to be added to serializers.py
-from .models import TenderSubscription, NotificationPreference, TenderNotification
-
-class TenderSubscriptionSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-    category = CategorySerializer(read_only=True)
-    category_id = serializers.PrimaryKeyRelatedField(
-        queryset=Category.objects.all(), source='category', write_only=True, required=False
-    )
-    subcategory = SubCategorySerializer(read_only=True)
-    subcategory_id = serializers.PrimaryKeyRelatedField(
-        queryset=SubCategory.objects.all(), source='subcategory', write_only=True, required=False
-    )
-    procurement_process = ProcurementProcessSerializer(read_only=True)
-    procurement_process_id = serializers.PrimaryKeyRelatedField(
-        queryset=ProcurementProcess.objects.all(), source='procurement_process', write_only=True, required=False
-    )
-
-    class Meta:
-        model = TenderSubscription
-        fields = [
-            'id', 'user', 'category', 'category_id', 'subcategory', 'subcategory_id',
-            'procurement_process', 'procurement_process_id', 'keywords',
-            'created_at', 'updated_at', 'is_active'
-        ]
-
-class NotificationPreferenceSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-
-    class Meta:
-        model = NotificationPreference
-        fields = [
-            'id', 'user', 'email_notifications', 'notification_frequency',
-            'last_notified', 'created_at', 'updated_at'
-        ]
-
-class TenderNotificationSerializer(serializers.ModelSerializer):
-    subscription = TenderSubscriptionSerializer(read_only=True)
-    tender = TenderSerializer(read_only=True)
-
-    class Meta:
-        model = TenderNotification
-        fields = [
-            'id', 'subscription', 'tender', 'sent_at', 'is_sent',
-            'delivery_status', 'created_at'
-        ]

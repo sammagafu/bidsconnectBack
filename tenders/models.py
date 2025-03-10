@@ -1,3 +1,4 @@
+# tenders/models.py
 from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -11,11 +12,11 @@ from django.conf import settings
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
-    slug = models.SlugField(unique=True, blank=True)
+    slug = models.SlugField(max_length=100, unique=True, blank=True)
     
     class Meta:
         verbose_name = "Industry Category"
-        verbose_name_plural = "Industy Categories"
+        verbose_name_plural = "Industry Categories"
         ordering = ['name']
 
     def __str__(self):
@@ -23,23 +24,23 @@ class Category(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
-            # Ensure slug uniqueness
+            base_slug = slugify(self.name)
+            self.slug = base_slug
             counter = 1
-            while Category.objects.filter(slug=self.slug).exists():
-                self.slug = f"{slugify(self.name)}-{counter}"
+            while Category.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base_slug}-{counter}"
                 counter += 1
         super().save(*args, **kwargs)
 
 class SubCategory(models.Model):
     name = models.CharField(max_length=100)
-    slug = models.SlugField(blank=True)
+    slug = models.SlugField(max_length=100, blank=True)
     category = models.ForeignKey(Category, on_delete=models.CASCADE)
     description = models.TextField(blank=True)
     
     class Meta:
         verbose_name = "Industry Sub Category"
-        verbose_name_plural = "Industy Sub -Categories"
+        verbose_name_plural = "Industry Sub Categories"
         unique_together = ('category', 'slug')
         ordering = ['name']
 
@@ -50,9 +51,8 @@ class SubCategory(models.Model):
         if not self.slug:
             base_slug = slugify(self.name)
             self.slug = base_slug
-            # Ensure slug uniqueness within the same category
             counter = 1
-            while SubCategory.objects.filter(category=self.category, slug=self.slug).exists():
+            while SubCategory.objects.filter(category=self.category, slug=self.slug).exclude(pk=self.pk).exists():
                 self.slug = f"{base_slug}-{counter}"
                 counter += 1
         super().save(*args, **kwargs)
@@ -65,11 +65,25 @@ class ProcurementProcess(models.Model):
         ('direct', 'Direct Procurement'),
     )
     name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=100, unique=True, blank=True)
     type = models.CharField(max_length=20, choices=PROCESS_TYPES)
     description = models.TextField()
 
+    class Meta:
+        ordering = ['name']
+
     def __str__(self):
         return f"{self.get_type_display()} - {self.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            self.slug = base_slug
+            counter = 1
+            while ProcurementProcess.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base_slug}-{counter}"
+                counter += 1
+        super().save(*args, **kwargs)
 
 class Tender(models.Model):
     STATUS_CHOICES = (
@@ -82,37 +96,31 @@ class Tender(models.Model):
         ("canceled", "Canceled"),
     )
     
-    # Core Information
     title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=200, unique=True, blank=True)
     reference_number = models.CharField(max_length=50, unique=True)
     description = models.TextField(verbose_name='Tender summary')
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True)
-    SubCategory = models.ForeignKey(SubCategory, on_delete=models.SET_NULL, null=True)
+    subcategory = models.ForeignKey(SubCategory, on_delete=models.SET_NULL, null=True)
     procurement_process = models.ForeignKey(ProcurementProcess, on_delete=models.SET_NULL, null=True)
 
-    # Timeline
     publication_date = models.DateTimeField(default=timezone.now)
     submission_deadline = models.DateTimeField()
     clarification_deadline = models.DateTimeField()
     evaluation_start_date = models.DateTimeField(null=True, blank=True)
     evaluation_end_date = models.DateTimeField(null=True, blank=True)
     
-    # Financials
     estimated_budget = models.DecimalField(max_digits=16, decimal_places=2)
     currency = models.CharField(max_length=3, default='TSH')
     bid_bond_percentage = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)])
     
-    # Location
     address = models.TextField()
-    # Relationships
     created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_tenders')
     evaluation_committee = models.ManyToManyField(CustomUser, related_name='evaluation_tenders', blank=True)
     
-    # Status Tracking
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     last_status_change = models.DateTimeField(auto_now=True)
     
-    # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)
@@ -121,16 +129,30 @@ class Tender(models.Model):
         indexes = [
             models.Index(fields=['-publication_date']),
             models.Index(fields=['status']),
+            models.Index(fields=['slug']),
         ]
         ordering = ['-publication_date']
 
     def __str__(self):
         return f"{self.reference_number} - {self.title}"
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.title)
+            self.slug = base_slug
+            counter = 1
+            while Tender.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base_slug}-{counter}"
+                counter += 1
+        super().save(*args, **kwargs)
+
 class TenderDocument(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='documents')
     file = models.FileField(upload_to='tender_documents/%Y/%m/')
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Document for {self.tender.title}"
 
 class TenderSubscription(models.Model):
     user = models.ForeignKey(
@@ -138,6 +160,7 @@ class TenderSubscription(models.Model):
         on_delete=models.CASCADE,
         related_name='tender_subscriptions'
     )
+    slug = models.SlugField(max_length=200, unique=True, blank=True)
     category = models.ForeignKey(
         Category,
         on_delete=models.CASCADE,
@@ -176,6 +199,7 @@ class TenderSubscription(models.Model):
             models.Index(fields=['category']),
             models.Index(fields=['subcategory']),
             models.Index(fields=['procurement_process']),
+            models.Index(fields=['slug']),
         ]
 
     def __str__(self):
@@ -189,7 +213,23 @@ class TenderSubscription(models.Model):
         if self.keywords:
             criteria.append(f"Keywords: {self.keywords}")
         return f"{self.user.username}'s subscription - {' | '.join(criteria)}"
-    
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            criteria_str = "-".join(filter(None, [
+                self.category.name if self.category else "",
+                self.subcategory.name if self.subcategory else "",
+                self.procurement_process.name if self.procurement_process else "",
+                self.keywords.replace(',', '-').replace(' ', '') if self.keywords else ""
+            ]))
+            base_slug = slugify(f"{self.user.username}-{criteria_str}")[:190]
+            self.slug = base_slug
+            counter = 1
+            while TenderSubscription.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base_slug}-{counter}"[:200]
+                counter += 1
+        super().save(*args, **kwargs)
+
 class NotificationPreference(models.Model):
     user = models.OneToOneField(
         CustomUser,
@@ -246,46 +286,49 @@ class TenderNotification(models.Model):
     def __str__(self):
         return f"Notification for {self.tender.title} to {self.subscription.user.username}"
 
+class TenderStatusHistory(models.Model):
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='status_history')
+    status = models.CharField(max_length=20, choices=Tender.STATUS_CHOICES)
+    changed_at = models.DateTimeField(auto_now_add=True)
+    changed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
+
+    class Meta:
+        ordering = ['-changed_at']
+
+    def __str__(self):
+        return f"{self.tender.title} - {self.status} at {self.changed_at}"
+
 # Signal handlers for automatic notification creation and sending
 @receiver(post_save, sender=Tender)
 def create_tender_notifications(sender, instance, created, **kwargs):
-    if created and instance.status == 'published':
-        # Find matching subscriptions
-        subscriptions = TenderSubscription.objects.filter(
-            is_active=True
-        )
+    if instance.status == 'published':
+        subscriptions = TenderSubscription.objects.filter(is_active=True)
 
-        # Filter by category if specified
         if instance.category:
             subscriptions = subscriptions.filter(
                 models.Q(category=instance.category) |
                 models.Q(category__isnull=True)
             )
 
-        # Filter by subcategory if specified
-        if instance.SubCategory:
+        if instance.subcategory:
             subscriptions = subscriptions.filter(
-                models.Q(subcategory=instance.SubCategory) |
+                models.Q(subcategory=instance.subcategory) |
                 models.Q(subcategory__isnull=True)
             )
 
-        # Filter by procurement process if specified
         if instance.procurement_process:
             subscriptions = subscriptions.filter(
                 models.Q(procurement_process=instance.procurement_process) |
                 models.Q(procurement_process__isnull=True)
             )
 
-        # Create notifications for matching subscriptions
         for subscription in subscriptions:
-            # Check keyword matches if specified
             if subscription.keywords:
                 keywords = [k.strip().lower() for k in subscription.keywords.split(',')]
                 content = f"{instance.title} {instance.description}".lower()
                 if not any(keyword in content for keyword in keywords):
                     continue
 
-            # Get user's notification preference
             try:
                 preference = subscription.user.notification_preference
                 if not preference.email_notifications:
@@ -293,23 +336,20 @@ def create_tender_notifications(sender, instance, created, **kwargs):
             except NotificationPreference.DoesNotExist:
                 continue
 
-            # Create notification
-            TenderNotification.objects.create(
+            TenderNotification.objects.get_or_create(
                 subscription=subscription,
-                tender=instance
+                tender=instance,
+                defaults={'is_sent': False}
             )
 
 @receiver(post_save, sender=TenderNotification)
 def send_tender_notification(sender, instance, created, **kwargs):
-    if created and not instance.is_sent:
+    if not instance.is_sent:
         user = instance.subscription.user
         preference = user.notification_preference
 
-        # Handle notification frequency
         if preference.notification_frequency == 'immediate':
             send_notification_email(instance)
-        # Note: For daily/weekly digests, you'll need to implement a scheduled task
-        # using Celery or similar task queue system
 
 def send_notification_email(notification):
     try:

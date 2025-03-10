@@ -1,4 +1,4 @@
-# admin.py
+# tenders/admin.py
 from django.contrib import admin
 from django import forms
 from django.core.exceptions import ValidationError
@@ -6,7 +6,8 @@ from django.contrib.admin import SimpleListFilter
 from .models import (
     Category, SubCategory, ProcurementProcess,
     Tender, TenderDocument, TenderSubscription,
-    NotificationPreference, TenderNotification
+    NotificationPreference, TenderNotification,
+    TenderStatusHistory
 )
 
 # Custom filters
@@ -34,21 +35,22 @@ class BudgetRangeFilter(SimpleListFilter):
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     list_display = ['name', 'slug']
-    search_fields = ['name']
+    search_fields = ['name', 'slug']
     prepopulated_fields = {'slug': ('name',)}
 
 @admin.register(SubCategory)
 class SubCategoryAdmin(admin.ModelAdmin):
     list_display = ['name', 'category', 'slug']
     list_filter = ['category']
-    search_fields = ['name', 'description']
+    search_fields = ['name', 'slug', 'description']
     prepopulated_fields = {'slug': ('name',)}
 
 @admin.register(ProcurementProcess)
 class ProcurementProcessAdmin(admin.ModelAdmin):
-    list_display = ['name', 'type', 'description']
+    list_display = ['name', 'slug', 'type', 'description']
     list_filter = ['type']
-    search_fields = ['name', 'description']
+    search_fields = ['name', 'slug', 'description']
+    prepopulated_fields = {'slug': ('name',)}
 
 # Inline for Tender Documents
 class TenderDocumentInline(admin.TabularInline):
@@ -65,22 +67,31 @@ class TenderNotificationInline(admin.TabularInline):
     readonly_fields = ['is_sent', 'sent_at', 'delivery_status', 'created_at']
     can_delete = False
 
+# Inline for Tender Status History
+class TenderStatusHistoryInline(admin.TabularInline):
+    model = TenderStatusHistory
+    extra = 0
+    fields = ['status', 'changed_at', 'changed_by']
+    readonly_fields = ['status', 'changed_at', 'changed_by']
+    can_delete = False
+
 # Main Tender Admin
 @admin.register(Tender)
 class TenderAdmin(admin.ModelAdmin):
-    list_display = ['reference_number', 'title', 'status',
-                   'category', 'SubCategory', 'publication_date',
+    list_display = ['reference_number', 'title', 'slug', 'status',
+                   'category', 'subcategory', 'publication_date',  # Changed 'SubCategory' to 'subcategory'
                    'submission_deadline', 'get_document_count',
                    'get_notification_count']
-    list_filter = ['status', 'category', 'SubCategory', 'procurement_process',
+    list_filter = ['status', 'category', 'subcategory', 'procurement_process',  # Changed 'SubCategory' to 'subcategory'
                   BudgetRangeFilter]
-    search_fields = ['title', 'reference_number', 'description']
+    search_fields = ['title', 'slug', 'reference_number', 'description']
     date_hierarchy = 'publication_date'
+    prepopulated_fields = {'slug': ('title',)}
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('title', 'reference_number', 'description',
-                      'category', 'SubCategory', 'procurement_process')
+            'fields': ('title', 'slug', 'reference_number', 'description',
+                      'category', 'subcategory', 'procurement_process')
         }),
         ('Timeline', {
             'fields': ('publication_date', 'submission_deadline',
@@ -101,7 +112,8 @@ class TenderAdmin(admin.ModelAdmin):
     
     inlines = [
         TenderDocumentInline,
-        TenderNotificationInline
+        TenderNotificationInline,
+        TenderStatusHistoryInline
     ]
     
     readonly_fields = ['last_status_change', 'created_at', 'updated_at']
@@ -109,9 +121,9 @@ class TenderAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'category', 'SubCategory', 'procurement_process', 'created_by'
+            'category', 'subcategory', 'procurement_process', 'created_by'
         ).prefetch_related(
-            'documents', 'notifications'
+            'documents', 'notifications', 'status_history'
         )
 
     def get_form(self, request, obj=None, **kwargs):
@@ -163,11 +175,12 @@ class TenderAdmin(admin.ModelAdmin):
 # Notification-related admin classes
 @admin.register(TenderSubscription)
 class TenderSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ['user', 'category', 'subcategory', 'procurement_process',
+    list_display = ['user', 'slug', 'category', 'subcategory', 'procurement_process',
                    'is_active', 'created_at', 'get_keywords']
     list_filter = ['is_active', 'category', 'subcategory', 'procurement_process']
-    search_fields = ['user__username', 'keywords']
+    search_fields = ['user__username', 'slug', 'keywords']
     readonly_fields = ['created_at', 'updated_at']
+    prepopulated_fields = {'slug': ('user',)}  # Note: Slug is auto-generated, but this is a hint
 
     def get_keywords(self, obj):
         return obj.keywords if obj.keywords else "No keywords"
@@ -186,6 +199,14 @@ class TenderNotificationAdmin(admin.ModelAdmin):
     list_display = ['tender', 'subscription', 'is_sent', 'sent_at',
                    'delivery_status', 'created_at']
     list_filter = ['is_sent', 'delivery_status']
-    search_fields = ['tender__title', 'subscription__user__username']
+    search_fields = ['tender__title', 'tender__slug', 'subscription__user__username']
     readonly_fields = ['sent_at', 'delivery_status', 'created_at']
     list_select_related = ['tender', 'subscription__user']
+
+@admin.register(TenderStatusHistory)
+class TenderStatusHistoryAdmin(admin.ModelAdmin):
+    list_display = ['tender', 'status', 'changed_at', 'changed_by']
+    list_filter = ['status', 'changed_at']
+    search_fields = ['tender__title', 'tender__slug', 'changed_by__username']
+    readonly_fields = ['changed_at']
+    date_hierarchy = 'changed_at'
