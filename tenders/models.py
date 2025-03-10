@@ -3,14 +3,19 @@ from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from accounts.models import CustomUser
 from django.utils.text import slugify
-from django.core.exceptions import ValidationError
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.conf import settings
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(unique=True, blank=True)
     
     class Meta:
-        verbose_name_plural = "Categories"
+        verbose_name = "Industry Category"
+        verbose_name_plural = "Industy Categories"
         ordering = ['name']
 
     def __str__(self):
@@ -33,6 +38,8 @@ class SubCategory(models.Model):
     description = models.TextField(blank=True)
     
     class Meta:
+        verbose_name = "Industry Sub Category"
+        verbose_name_plural = "Industy Sub -Categories"
         unique_together = ('category', 'slug')
         ordering = ['name']
 
@@ -78,10 +85,11 @@ class Tender(models.Model):
     # Core Information
     title = models.CharField(max_length=200)
     reference_number = models.CharField(max_length=50, unique=True)
-    description = models.TextField()
+    description = models.TextField(verbose_name='Tender summary')
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True)
+    SubCategory = models.ForeignKey(SubCategory, on_delete=models.SET_NULL, null=True)
     procurement_process = models.ForeignKey(ProcurementProcess, on_delete=models.SET_NULL, null=True)
-    
+
     # Timeline
     publication_date = models.DateTimeField(default=timezone.now)
     submission_deadline = models.DateTimeField()
@@ -120,112 +128,218 @@ class Tender(models.Model):
         return f"{self.reference_number} - {self.title}"
 
 class TenderDocument(models.Model):
-    DOCUMENT_TYPES = (
-        ('notice', 'Tender Notice'),
-        ('technical', 'Technical Specifications'),
-        ('financial', 'Financial Requirements'),
-        ('evaluation', 'Evaluation Criteria'),
-        ('contract', 'Draft Contract'),
-    )
-    
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='documents')
-    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES)
     file = models.FileField(upload_to='tender_documents/%Y/%m/')
-    version = models.CharField(max_length=10)
-    uploaded_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        unique_together = ('tender', 'document_type', 'version')
-
-class Bid(models.Model):
-    STATUS_CHOICES = (
-        ('draft', 'Draft'),
-        ('submitted', 'Submitted'),
-        ('under_review', 'Under Review'),
-        ('qualified', 'Technically Qualified'),
-        ('disqualified', 'Disqualified'),
-        ('awarded', 'Awarded'),
-        ('withdrawn', 'Withdrawn'),
+class TenderSubscription(models.Model):
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='tender_subscriptions'
     )
-    
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='bids')
-    bidder = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='submitted_bids')
-    
-    # Pricing
-    total_price = models.DecimalField(max_digits=16, decimal_places=2)
-    currency = models.CharField(max_length=3, default='KES')
-    validity_days = models.PositiveIntegerField(default=90)
-    
-    # Evaluation
-    technical_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    financial_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    combined_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    
-    # Status
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    submission_date = models.DateTimeField(null=True, blank=True)
-    
-    class Meta:
-        unique_together = ('tender', 'bidder')
-        ordering = ['-submission_date']
-
-class BidDocument(models.Model):
-    DOCUMENT_TYPES = (
-        ('technical', 'Technical Proposal'),
-        ('financial', 'Financial Proposal'),
-        ('qualification', 'Qualification Documents'),
-        ('bid_bond', 'Bid Bond'),
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Subscribe to all tenders in this category"
     )
-    
-    bid = models.ForeignKey(Bid, on_delete=models.CASCADE, related_name='documents')
-    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES)
-    file = models.FileField(upload_to='bid_documents/%Y/%m/')
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+    subcategory = models.ForeignKey(
+        SubCategory,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Subscribe to all tenders in this subcategory"
+    )
+    procurement_process = models.ForeignKey(
+        ProcurementProcess,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Subscribe to all tenders with this procurement process"
+    )
+    keywords = models.TextField(
+        blank=True,
+        help_text="Comma-separated keywords to match in tender title and description"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
 
-class EvaluationCriterion(models.Model):
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='evaluation_criteria')
-    name = models.CharField(max_length=200)
-    description = models.TextField()
-    weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    max_score = models.DecimalField(max_digits=5, decimal_places=2)
-
-class EvaluationResponse(models.Model):
-    criterion = models.ForeignKey(EvaluationCriterion, on_delete=models.CASCADE)
-    bid = models.ForeignKey(Bid, on_delete=models.CASCADE, related_name='evaluations')
-    score = models.DecimalField(max_digits=5, decimal_places=2)
-    comments = models.TextField(blank=True)
-    evaluated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
-    evaluated_at = models.DateTimeField(auto_now_add=True)
-
-class Contract(models.Model):
-    tender = models.OneToOneField(Tender, on_delete=models.CASCADE, related_name='contract')
-    bid = models.OneToOneField(Bid, on_delete=models.CASCADE, related_name='awarded_contract')
-    start_date = models.DateField()
-    end_date = models.DateField()
-    value = models.DecimalField(max_digits=16, decimal_places=2)
-    signed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
-    signed_at = models.DateTimeField(null=True, blank=True)
-    
     class Meta:
+        unique_together = [
+            ('user', 'category', 'subcategory', 'procurement_process')
+        ]
         indexes = [
-            models.Index(fields=['start_date']),
-            models.Index(fields=['end_date']),
+            models.Index(fields=['user', 'is_active']),
+            models.Index(fields=['category']),
+            models.Index(fields=['subcategory']),
+            models.Index(fields=['procurement_process']),
         ]
 
-class AuditLog(models.Model):
-    ACTION_CHOICES = (
-        ('create', 'Create'),
-        ('update', 'Update'),
-        ('status_change', 'Status Change'),
-        ('document_upload', 'Document Upload'),
-    )
+    def __str__(self):
+        criteria = []
+        if self.category:
+            criteria.append(f"Category: {self.category.name}")
+        if self.subcategory:
+            criteria.append(f"Subcategory: {self.subcategory.name}")
+        if self.procurement_process:
+            criteria.append(f"Process: {self.procurement_process.name}")
+        if self.keywords:
+            criteria.append(f"Keywords: {self.keywords}")
+        return f"{self.user.username}'s subscription - {' | '.join(criteria)}"
     
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE)
-    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
-    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
-    details = models.JSONField()
-    timestamp = models.DateTimeField(auto_now_add=True)
+class NotificationPreference(models.Model):
+    user = models.OneToOneField(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='notification_preference'
+    )
+    email_notifications = models.BooleanField(
+        default=True,
+        help_text="Receive email notifications for new matching tenders"
+    )
+    notification_frequency = models.CharField(
+        max_length=20,
+        choices=(
+            ('immediate', 'Immediate'),
+            ('daily', 'Daily Digest'),
+            ('weekly', 'Weekly Digest'),
+        ),
+        default='immediate'
+    )
+    last_notified = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user.username}'s notification preferences"
+
+class TenderNotification(models.Model):
+    subscription = models.ForeignKey(
+        TenderSubscription,
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    tender = models.ForeignKey(
+        Tender,
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    sent_at = models.DateTimeField(null=True, blank=True)
+    is_sent = models.BooleanField(default=False)
+    delivery_status = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Email delivery status"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-timestamp']
+        unique_together = ('subscription', 'tender')
+        indexes = [
+            models.Index(fields=['is_sent']),
+            models.Index(fields=['sent_at']),
+        ]
+
+    def __str__(self):
+        return f"Notification for {self.tender.title} to {self.subscription.user.username}"
+
+# Signal handlers for automatic notification creation and sending
+@receiver(post_save, sender=Tender)
+def create_tender_notifications(sender, instance, created, **kwargs):
+    if created and instance.status == 'published':
+        # Find matching subscriptions
+        subscriptions = TenderSubscription.objects.filter(
+            is_active=True
+        )
+
+        # Filter by category if specified
+        if instance.category:
+            subscriptions = subscriptions.filter(
+                models.Q(category=instance.category) |
+                models.Q(category__isnull=True)
+            )
+
+        # Filter by subcategory if specified
+        if instance.SubCategory:
+            subscriptions = subscriptions.filter(
+                models.Q(subcategory=instance.SubCategory) |
+                models.Q(subcategory__isnull=True)
+            )
+
+        # Filter by procurement process if specified
+        if instance.procurement_process:
+            subscriptions = subscriptions.filter(
+                models.Q(procurement_process=instance.procurement_process) |
+                models.Q(procurement_process__isnull=True)
+            )
+
+        # Create notifications for matching subscriptions
+        for subscription in subscriptions:
+            # Check keyword matches if specified
+            if subscription.keywords:
+                keywords = [k.strip().lower() for k in subscription.keywords.split(',')]
+                content = f"{instance.title} {instance.description}".lower()
+                if not any(keyword in content for keyword in keywords):
+                    continue
+
+            # Get user's notification preference
+            try:
+                preference = subscription.user.notification_preference
+                if not preference.email_notifications:
+                    continue
+            except NotificationPreference.DoesNotExist:
+                continue
+
+            # Create notification
+            TenderNotification.objects.create(
+                subscription=subscription,
+                tender=instance
+            )
+
+@receiver(post_save, sender=TenderNotification)
+def send_tender_notification(sender, instance, created, **kwargs):
+    if created and not instance.is_sent:
+        user = instance.subscription.user
+        preference = user.notification_preference
+
+        # Handle notification frequency
+        if preference.notification_frequency == 'immediate':
+            send_notification_email(instance)
+        # Note: For daily/weekly digests, you'll need to implement a scheduled task
+        # using Celery or similar task queue system
+
+def send_notification_email(notification):
+    try:
+        tender = notification.tender
+        user = notification.subscription.user
+        
+        subject = f"New Tender Alert: {tender.title}"
+        context = {
+            'user': user,
+            'tender': tender,
+            'site_name': getattr(settings, 'SITE_NAME', 'Tender Portal'),
+        }
+        
+        html_message = render_to_string('emails/new_tender_notification.html', context)
+        plain_message = render_to_string('emails/new_tender_notification.txt', context)
+
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        notification.is_sent = True
+        notification.sent_at = timezone.now()
+        notification.delivery_status = 'sent'
+        notification.save()
+
+    except Exception as e:
+        notification.delivery_status = f'error: {str(e)}'
+        notification.save()
