@@ -1,6 +1,8 @@
+# accounts/admin.py
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument, AuditLog
+from .constants import DOCUMENT_EXPIRY_NOTIFICATION_DAYS
 
 # CustomUser Admin
 class CustomUserAdmin(BaseUserAdmin):
@@ -10,7 +12,6 @@ class CustomUserAdmin(BaseUserAdmin):
     search_fields = ('email', 'phone_number', 'first_name', 'last_name')
     ordering = ('email',)
     
-    # Fields to display in the admin form
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
         ('Personal Info', {'fields': ('phone_number', 'first_name', 'last_name')}),
@@ -22,7 +23,6 @@ class CustomUserAdmin(BaseUserAdmin):
             'fields': ('email', 'phone_number', 'first_name', 'last_name', 'password1', 'password2', 'is_staff', 'is_active')}
         ),
     )
-    # No readonly_fields like 'date_joined' or 'last_login' since they don’t exist
 
 # Company Admin
 @admin.register(Company)
@@ -72,18 +72,44 @@ class CompanyInvitationAdmin(admin.ModelAdmin):
 # CompanyDocument Admin
 @admin.register(CompanyDocument)
 class CompanyDocumentAdmin(admin.ModelAdmin):
-    list_display = ('company', 'document_type', 'uploaded_by', 'uploaded_at')
-    list_filter = ('document_type', 'uploaded_at')
+    list_display = (
+        'company', 'document_type', 'document_category', 
+        'uploaded_by', 'uploaded_at', 'expires_at', 
+        'is_expired', 'get_notification_status'
+    )
+    list_filter = (
+        'document_type', 'document_category', 
+        'is_expired', 'uploaded_at'
+    )
     search_fields = ('company__name', 'uploaded_by__email')
     raw_id_fields = ('company', 'uploaded_by')
     date_hierarchy = 'uploaded_at'
     ordering = ('-uploaded_at',)
 
+    def get_notification_status(self, obj):
+        status = []
+        for days in DOCUMENT_EXPIRY_NOTIFICATION_DAYS:
+            str_days = str(days)
+            sent = obj.notification_sent.get(str_days, False)
+            attempts = obj.notification_attempts.get(str_days, 0)
+            status.append(f"{days}d: {'Sent' if sent else f'Pending ({attempts})'}")
+        return ", ".join(status)
+    get_notification_status.short_description = "Notification Status"
+
     fieldsets = (
-        (None, {'fields': ('company', 'document_type', 'document_file')}),
-        ('Metadata', {'fields': ('uploaded_by', 'uploaded_at')}),
+        (None, {'fields': ('company', 'document_type', 'document_category', 'document_file')}),
+        ('Metadata', {
+            'fields': (
+                'uploaded_by', 'uploaded_at', 
+                'expires_at', 'is_expired',
+                'notification_sent', 'notification_attempts'
+            )
+        }),
     )
-    readonly_fields = ('uploaded_at',)
+    readonly_fields = (
+        'uploaded_at', 'is_expired', 
+        'notification_sent', 'notification_attempts'
+    )
 
 # AuditLog Admin
 @admin.register(AuditLog)

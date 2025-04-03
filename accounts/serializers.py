@@ -7,6 +7,13 @@ from .permissions import IsCompanyAdminOrOwner
 from .constants import ROLE_CHOICES, VALID_FILE_EXTENSIONS, MAX_FILE_SIZE
 import os
 
+class CustomUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'email', 'phone_number', 'first_name', 'last_name']
+        read_only_fields = ['id', 'email']
+    
+
 class CustomUserCreateSerializer(UserCreateSerializer):
     invitation_token = serializers.CharField(required=False, write_only=True)
     phone_number = serializers.CharField(required=True, min_length=10, max_length=20)

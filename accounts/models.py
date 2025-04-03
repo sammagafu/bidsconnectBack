@@ -1,11 +1,19 @@
+# accounts/models.py
 import uuid
 from django.db import models, transaction
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.contrib.auth.models import Group, Permission
+from django.db.models import Avg
 import secrets
-from .constants import ROLE_CHOICES, DOCUMENT_TYPE_CHOICES, MAX_COMPANY_USERS
+from .constants import (
+    ROLE_CHOICES, 
+    DOCUMENT_TYPE_CHOICES, 
+    MAX_COMPANY_USERS,
+    DOCUMENT_CATEGORY_CHOICES,
+    DOCUMENT_EXPIRY_NOTIFICATION_DAYS
+)
 from django.conf import settings
 
 class CustomUserManager(BaseUserManager):
@@ -59,6 +67,9 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+    def get_full_name(self):
+        return f"{self.first_name} {self.last_name}".strip() or self.email
 
 class Company(models.Model):
     """
@@ -243,6 +254,10 @@ class Company(models.Model):
         self.status = 'inactive'
         self.save()
 
+    @property
+    def average_rating(self):
+        return self.reviews.aggregate(Avg('rating'))['rating__avg'] or 0
+
 class CompanyUser(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='company_users')
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
@@ -290,15 +305,91 @@ class CompanyInvitation(models.Model):
         super().save(*args, **kwargs)
 
 class CompanyDocument(models.Model):
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='documents')
     uploaded_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
-    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
-    document_file = models.FileField(upload_to='company_documents/')
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+    document_type = models.CharField(
+        max_length=50, 
+        choices=DOCUMENT_TYPE_CHOICES,
+        help_text="Type of document"
+    )
+    document_category = models.CharField(
+        max_length=50,
+        choices=DOCUMENT_CATEGORY_CHOICES,
+        default='other',
+        help_text="Category of the document"
+    )
+    document_file = models.FileField(
+        upload_to='company_documents/',
+        help_text="The document file"
+    )
+    uploaded_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when document was uploaded"
+    )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Date when the document expires (optional)"
+    )
+    is_expired = models.BooleanField(
+        default=False,
+        help_text="Indicates if the document has expired"
+    )
+    notification_sent = models.JSONField(
+        default=dict,
+        help_text="Tracks notification stages that have been sent (e.g., {'7': true, '3': false})"
+    )
+    notification_attempts = models.JSONField(
+        default=dict,
+        help_text="Tracks notification attempt counts for each stage"
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['expires_at']),
+            models.Index(fields=['is_expired']),
+            models.Index(fields=['document_category']),
+            models.Index(fields=['uploaded_at']),
+        ]
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"{self.get_document_type_display()} - {self.document_file.name} ({self.get_document_category_display()})"
 
     def clean(self):
         if self.uploaded_by != self.company.owner:
             raise ValidationError("Only company owners can upload documents.")
+        
+        if self.expires_at and self.expires_at < timezone.now():
+            raise ValidationError("Expiration date cannot be in the past.")
+
+    def reset_notifications(self):
+        """Reset notification status when document is updated"""
+        notification_threshold = timezone.now() + timezone.timedelta(
+            days=max(DOCUMENT_EXPIRY_NOTIFICATION_DAYS)
+        )
+        if self.expires_at and self.expires_at > notification_threshold:
+            self.notification_sent = {}
+            self.notification_attempts = {}
+
+    def save(self, *args, **kwargs):
+        # Initialize notification tracking if empty
+        if not self.notification_sent:
+            self.notification_sent = {}
+        if not self.notification_attempts:
+            self.notification_attempts = {}
+        
+        # Reset notifications if expiry date is extended
+        self.reset_notifications()
+        
+        if not self.expires_at and self._state.adding:
+            self.expires_at = timezone.now() + timezone.timedelta(days=DEFAULT_DOCUMENT_EXPIRY_DAYS)
+        
+        if self.expires_at:
+            self.is_expired = self.expires_at < timezone.now()
+        
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 class AuditLog(models.Model):
     action = models.CharField(max_length=50)
@@ -310,3 +401,13 @@ class AuditLog(models.Model):
     )
     timestamp = models.DateTimeField(auto_now_add=True)
     details = models.JSONField()
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['action', 'timestamp']),
+            models.Index(fields=['user']),
+        ]
+
+    def __str__(self):
+        return f"{self.action} - {self.timestamp}"
