@@ -29,7 +29,6 @@ class ProcurementProcessSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'slug', 'type', 'description']
 
 class TenderDocumentSerializer(serializers.ModelSerializer):
-    uploaded_by = serializers.StringRelatedField(read_only=True)
     file = serializers.FileField()
 
     class Meta:
@@ -65,12 +64,13 @@ class TenderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tender
         fields = [
-            'id', 'title', 'slug', 'reference_number', 'description', 'category', 'category_id',
-            'subcategory', 'subcategory_id', 'procurement_process', 'procurement_process_id',
-            'publication_date', 'submission_deadline', 'clarification_deadline',
-            'evaluation_start_date', 'evaluation_end_date', 'estimated_budget', 'currency',
-            'bid_bond_percentage', 'address', 'created_by', 'evaluation_committee', 'status',
-            'last_status_change', 'created_at', 'updated_at', 'version', 'documents'
+            'id', 'title', 'slug', 'reference_number', 'tender_type_country', 'tender_type_sector',
+            'tenderdescription', 'category', 'category_id', 'subcategory', 'subcategory_id',
+            'procurement_process', 'procurement_process_id', 'publication_date', 'submission_deadline',
+            'clarification_deadline', 'evaluation_start_date', 'evaluation_end_date',
+            'estimated_budget', 'currency', 'bid_bond_percentage', 'address', 'created_by',
+            'evaluation_committee', 'status', 'last_status_change', 'created_at', 'updated_at',
+            'version', 'documents'
         ]
 
     def validate(self, data):
@@ -127,4 +127,4 @@ class TenderStatusHistorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TenderStatusHistory
-        fields = ['id', 'status', 'changed_at', 'changed_by']
+        fields = ['id', 'tender', 'status', 'changed_at', 'changed_by']

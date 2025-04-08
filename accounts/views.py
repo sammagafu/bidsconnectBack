@@ -24,7 +24,7 @@ class CompanyListView(generics.ListCreateAPIView):
     throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
-        return self.request.user.companies.filter(deleted_at__isnull=True).select_related('owner')
+        return Company.objects.filter(owner=self.request.user, deleted_at__isnull=True).select_related('owner')
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -201,3 +201,23 @@ class InvitationAcceptanceView(generics.GenericAPIView):
         )
         
         return Response({"detail": "Invitation accepted successfully"})
+
+# New view for owners to list their companies
+class OwnerCompanyListView(generics.ListAPIView):
+    serializer_class = CompanySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def get_queryset(self):
+        """Returns companies owned by the authenticated user, excluding soft-deleted ones."""
+        return Company.objects.filter(owner=self.request.user, deleted_at__isnull=True).select_related('owner')
+
+# New view for admins to list all companies
+class AdminCompanyListView(generics.ListAPIView):
+    serializer_class = CompanySerializer
+    permission_classes = [permissions.IsAdminUser]
+    throttle_classes = [UserRateThrottle]
+
+    def get_queryset(self):
+        """Returns all companies, including soft-deleted ones, for admin users."""
+        return Company.objects.all().select_related('owner')

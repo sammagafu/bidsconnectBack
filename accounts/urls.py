@@ -1,4 +1,3 @@
-# accounts/urls.py
 from django.urls import path
 from . import views
 
@@ -13,4 +12,8 @@ urlpatterns = [
     path('companies/<uuid:company_id>/documents/<int:id>/', views.DocumentDetailView.as_view(), name='document-detail'),
     path('profile/', views.UserProfileView.as_view(), name='user-profile'),
     path('accept-invitation/<str:token>/', views.InvitationAcceptanceView.as_view(), name='accept-invitation'),
+    # New URL for owners to list their companies
+    path('companies/owner/', views.OwnerCompanyListView.as_view(), name='owner-company-list'),
+    # New URL for admins to list all companies
+    path('companies/admin/', views.AdminCompanyListView.as_view(), name='admin-company-list'),
 ]

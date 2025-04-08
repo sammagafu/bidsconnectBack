@@ -6,13 +6,14 @@ from .models import CustomUser, Company, CompanyUser, CompanyInvitation, Company
 from .permissions import IsCompanyAdminOrOwner
 from .constants import ROLE_CHOICES, VALID_FILE_EXTENSIONS, MAX_FILE_SIZE
 import os
+from django.db.models import Q
 
+# Existing serializers (unchanged)
 class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['id', 'email', 'phone_number', 'first_name', 'last_name']
         read_only_fields = ['id', 'email']
-    
 
 class CustomUserCreateSerializer(UserCreateSerializer):
     invitation_token = serializers.CharField(required=False, write_only=True)
@@ -20,7 +21,7 @@ class CustomUserCreateSerializer(UserCreateSerializer):
 
     class Meta(UserCreateSerializer.Meta):
         model = CustomUser
-        fields = ('id', 'email', 'phone_number', 'password', 'invitation_token')
+        fields = ('id', 'email', 'phone_number', 'password', 'invitation_token','first_name', 'last_name')
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': True},
@@ -39,7 +40,6 @@ class CustomUserCreateSerializer(UserCreateSerializer):
         invitation_token = validated_data.pop('invitation_token', None)
         phone_number = validated_data.pop('phone_number', None)
         
-        # Create user using CustomUserManager
         user = CustomUser.objects.create_user(
             email=validated_data['email'],
             password=validated_data['password']
@@ -97,7 +97,7 @@ class CompanySerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'industry', 'website', 'logo',
             'email', 'phone_number', 'address', 'tax_id', 'registration_number',
             'founded_date', 'country', 'status', 'employee_count', 'parent_company',
-            'owner', 'owner_email', 'created_at', 'updated_at', 'created_by'
+            'owner', 'owner_email','is_verified','verification_date', 'created_at', 'updated_at', 'created_by'
         )
         read_only_fields = ('created_at', 'updated_at')
 
@@ -185,3 +185,63 @@ class CompanyDocumentSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['company_id'] = self.context['view'].kwargs['company_id']
         return super().create(validated_data)
+
+# Updated CustomUserDetailSerializer
+class CustomUserDetailSerializer(serializers.ModelSerializer):
+    """Serializer for detailed user data with all nested relationships"""
+    companies = serializers.SerializerMethodField()
+    company_users = serializers.SerializerMethodField()
+    invitations_sent = serializers.SerializerMethodField()
+    invitations_received = serializers.SerializerMethodField()
+    documents_uploaded = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id', 'email', 'phone_number', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser',  # Added comma here
+            'companies', 'company_users', 'invitations_sent', 'invitations_received', 'documents_uploaded'
+        ]
+        read_only_fields = ['id', 'email', 'is_active', 'is_staff']
+
+    def get_companies(self, obj):
+        """Get all companies where the user is the owner or a member"""
+        companies = Company.objects.filter(
+            Q(owner=obj) | Q(company_users__user=obj),
+            deleted_at__isnull=True
+        ).distinct()
+        return CompanySerializer(companies, many=True, context=self.context).data
+
+    def get_company_users(self, obj):
+        """Get all CompanyUser instances for the user"""
+        company_users = CompanyUser.objects.filter(
+            user=obj,
+            company__deleted_at__isnull=True
+        ).select_related('company')
+        return CompanyUserSerializer(company_users, many=True, context=self.context).data
+
+    def get_invitations_sent(self, obj):
+        """Get all invitations sent by the user"""
+        invitations = CompanyInvitation.objects.filter(
+            invited_by=obj,
+            company__deleted_at__isnull=True,
+            expires_at__gt=timezone.now()
+        ).select_related('company')
+        return CompanyInvitationSerializer(invitations, many=True, context=self.context).data
+
+    def get_invitations_received(self, obj):
+        """Get all pending invitations received by the user"""
+        invitations = CompanyInvitation.objects.filter(
+            invited_email=obj.email,
+            accepted=False,
+            expires_at__gt=timezone.now(),
+            company__deleted_at__isnull=True
+        ).select_related('company')
+        return CompanyInvitationSerializer(invitations, many=True, context=self.context).data
+
+    def get_documents_uploaded(self, obj):
+        """Get all documents uploaded by the user"""
+        documents = CompanyDocument.objects.filter(
+            uploaded_by=obj,
+            company__deleted_at__isnull=True
+        ).select_related('company')
+        return CompanyDocumentSerializer(documents, many=True, context=self.context).data

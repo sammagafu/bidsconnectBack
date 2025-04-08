@@ -180,6 +180,15 @@ class Company(models.Model):
         default='active',
         help_text="The operational status of the company (e.g., active, inactive, suspended)."
     )
+    is_verified = models.BooleanField(
+        default=False,
+        help_text="Indicates if the company has been verified by the system."
+    )
+    verification_date = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="The date when the company was verified."
+    )
     employee_count = models.PositiveIntegerField(
         blank=True,
         null=True,

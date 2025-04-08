@@ -182,7 +182,7 @@ DJOSER = {
     'SERIALIZERS': {
         'user_create': 'accounts.serializers.CustomUserCreateSerializer',
         'user': 'accounts.serializers.CustomUserCreateSerializer',
-        'current_user': 'accounts.serializers.CustomUserCreateSerializer',
+        'current_user': 'accounts.serializers.CustomUserDetailSerializer',
     },
     'PERMISSIONS': {
         'user_create': ['rest_framework.permissions.AllowAny'],

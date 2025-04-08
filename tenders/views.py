@@ -1,6 +1,5 @@
-# tenders/views.py
 from rest_framework import generics, status, filters
-from rest_framework.permissions import IsAuthenticated, IsAdminUser,AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.viewsets import ModelViewSet
@@ -78,8 +77,12 @@ class TenderListCreateView(generics.ListCreateAPIView):
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['status', 'category__slug', 'subcategory__slug', 'procurement_process__slug']
-    search_fields = ['title', 'slug', 'description', 'reference_number']
+    filterset_fields = [
+        'status', 'category__slug', 'subcategory__slug', 'procurement_process__slug',
+        # Optional: uncomment to allow filtering by new fields
+        'tender_type_country', 'tender_type_sector'
+    ]
+    search_fields = ['title', 'slug', 'tenderdescription', 'reference_number']
     pagination_class = TenderPagination
 
     def get_permissions(self):
@@ -90,7 +93,7 @@ class TenderListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Staff users see all tenders when authenticated
+        # Staff users see all tenders vacun authenticated
         if self.request.user.is_authenticated and self.request.user.is_staff:
             return queryset
         # Everyone (authenticated or not) sees only published tenders
@@ -107,10 +110,11 @@ class TenderListCreateView(generics.ListCreateAPIView):
             status=tender.status,
             changed_by=self.request.user
         )
+
 class TenderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsAdminUser]
     lookup_field = 'slug'
 
     def get_permissions(self):
@@ -172,7 +176,7 @@ class TenderDocumentListCreateView(generics.ListCreateAPIView):
                 {"detail": "Cannot add documents to a tender that is not in draft or pending status."},
                 status=status.HTTP_403_FORBIDDEN
             )
-        serializer.save(uploaded_by=self.request.user)
+        serializer.save()
 
 class TenderDocumentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = TenderDocument.objects.all()

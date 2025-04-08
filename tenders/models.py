@@ -95,11 +95,25 @@ class Tender(models.Model):
         ("closed", "Closed"),
         ("canceled", "Canceled"),
     )
+
+    TenderTypeCountry = (
+        ('National', 'National Tendering'),
+        ('International', 'International Tendering'),
+    )
+    TenderTypeSector = (
+        ('Private Company', 'Private Company Tendering'),
+        ('Public Sector', 'Public Sector Tendering'),
+        ('Non-Governmental Organization', 'Non-Governmental Organization Tendering'),  
+        ('Government Agency', 'Government Agency Tendering'),
+
+    )
     
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True, blank=True)
     reference_number = models.CharField(max_length=50, unique=True)
-    description = models.TextField(verbose_name='Tender summary')
+    tender_type_country = models.CharField(max_length=30, choices=TenderTypeCountry,default='National')
+    tender_type_sector = models.CharField(max_length=30, choices=TenderTypeSector,default='Private Company')
+    tenderdescription = models.TextField(default="tender description to be updated")
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True)
     subcategory = models.ForeignKey(SubCategory, on_delete=models.SET_NULL, null=True)
     procurement_process = models.ForeignKey(ProcurementProcess, on_delete=models.SET_NULL, null=True)
