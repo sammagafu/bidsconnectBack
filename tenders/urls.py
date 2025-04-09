@@ -9,7 +9,8 @@ from .views import (
     TenderDocumentListCreateView, TenderDocumentRetrieveUpdateDestroyView,
     TenderSubscriptionViewSet,
     NotificationPreferenceRetrieveUpdateView, TenderNotificationListView,
-    publish_tender
+    publish_tender,
+    CategoryWithSubcategoriesCreateView
 )
 
 router = DefaultRouter()
@@ -29,4 +30,5 @@ urlpatterns = [
     path('tender-documents/<int:pk>/', TenderDocumentRetrieveUpdateDestroyView.as_view(), name='tender-document-detail'),
     path('notification-preferences/', NotificationPreferenceRetrieveUpdateView.as_view(), name='notification-preference'),
     path('notifications/', TenderNotificationListView.as_view(), name='notification-list'),
+    path('categories-with-subcategories/', CategoryWithSubcategoriesCreateView.as_view(), name='category-with-subcategories-create'),
 ] + router.urls

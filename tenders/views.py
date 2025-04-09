@@ -1,3 +1,4 @@
+# tenders/views.py
 from rest_framework import generics, status, filters
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
@@ -18,7 +19,8 @@ from .serializers import (
     CategorySerializer, SubCategorySerializer, ProcurementProcessSerializer,
     TenderSerializer, TenderDocumentSerializer,
     TenderSubscriptionSerializer, NotificationPreferenceSerializer,
-    TenderNotificationSerializer, TenderStatusHistorySerializer
+    TenderNotificationSerializer, TenderStatusHistorySerializer,
+    CategoryWithSubcategoriesSerializer  # New serializer
 )
 
 # Custom Pagination Class
@@ -41,6 +43,19 @@ class CategoryRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticated, IsAdminUser]
     lookup_field = 'slug'
+
+# New view for creating category with subcategories
+class CategoryWithSubcategoriesCreateView(generics.CreateAPIView):
+    queryset = Category.objects.all()
+    serializer_class = CategoryWithSubcategoriesSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        category = serializer.save()
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
 # SubCategory Views
 class SubCategoryListCreateView(generics.ListCreateAPIView):
@@ -79,28 +94,22 @@ class TenderListCreateView(generics.ListCreateAPIView):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = [
         'status', 'category__slug', 'subcategory__slug', 'procurement_process__slug',
-        # Optional: uncomment to allow filtering by new fields
-        'tender_type_country', 'tender_type_sector'
     ]
     search_fields = ['title', 'slug', 'tenderdescription', 'reference_number']
     pagination_class = TenderPagination
 
     def get_permissions(self):
-        # Allow anyone to list tenders (GET), require authentication for creating (POST)
         if self.request.method == 'GET':
             return [AllowAny()]
         return [IsAuthenticated()]
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Staff users see all tenders vacun authenticated
         if self.request.user.is_authenticated and self.request.user.is_staff:
             return queryset
-        # Everyone (authenticated or not) sees only published tenders
         return queryset.filter(status='published')
 
     def perform_create(self, serializer):
-        # Only authenticated users can create tenders
         tender = serializer.save(created_by=self.request.user)
         evaluation_committee = self.request.data.get('evaluation_committee', [])
         if evaluation_committee:
@@ -114,7 +123,7 @@ class TenderListCreateView(generics.ListCreateAPIView):
 class TenderRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
-    permission_classes = [IsAuthenticated,IsAdminUser]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
 
     def get_permissions(self):
