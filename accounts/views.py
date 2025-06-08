@@ -38,7 +38,7 @@ class CompanyListView(generics.ListCreateAPIView):
 class CompanyDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Company.objects.filter(deleted_at__isnull=True)
     serializer_class = CompanySerializer
-    permission_classes = [IsCompanyOwner]
+    permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'id'
     throttle_classes = [UserRateThrottle]
 

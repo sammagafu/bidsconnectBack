@@ -1,9 +1,9 @@
-from rest_framework import viewsets, permissions, status, filters
+from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from django.db.models import Q, Avg
+from django.db.models import Q
 from rest_framework.pagination import PageNumberPagination
 from .models import (
     Category, SubCategory, ProductService, ProductImage, 
@@ -12,11 +12,13 @@ from .models import (
 from .serializers import (
     CategorySerializer, SubCategorySerializer, ProductServiceSerializer,
     ProductImageSerializer, PriceListSerializer, QuoteRequestSerializer,
-    CompanyReviewSerializer, MessageSerializer, NotificationSerializer
+    CompanyReviewSerializer, MessageSerializer, NotificationSerializer,
+    CategoryWithSubcategoriesSerializer
 )
 from accounts.models import Company, CustomUser
 from django_filters import rest_framework as df_filters
 from rest_framework.exceptions import ValidationError
+from rest_framework import generics
 
 # Custom pagination class
 class StandardResultsSetPagination(PageNumberPagination):
@@ -60,10 +62,16 @@ class IsReviewOwnerOrAdmin(permissions.BasePermission):
             return True
         return obj.user == request.user or request.user.is_staff
 
+class IsAdminOrReadOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.is_authenticated and request.user.is_staff
+
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['name', 'description']
@@ -79,12 +87,29 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class SubCategoryViewSet(viewsets.ModelViewSet):
     queryset = SubCategory.objects.all()
     serializer_class = SubCategorySerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
     filterset_fields = ['category']
+
+class CategoryWithSubcategoriesView(generics.GenericAPIView):
+    queryset = Category.objects.all()
+    serializer_class = CategoryWithSubcategoriesSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        category = serializer.save()
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def get(self, request, *args, **kwargs):
+        categories = self.get_queryset()
+        serializer = self.get_serializer(categories, many=True)
+        return Response(serializer.data)
 
 class ProductServiceViewSet(viewsets.ModelViewSet):
     queryset = ProductService.objects.filter(is_active=True)
@@ -97,11 +122,13 @@ class ProductServiceViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'name', 'prices__unit_price']
 
     def perform_create(self, serializer):
+        if not hasattr(self.request.user, 'company'):
+            raise ValidationError("User must have an associated company to create a product.")
         serializer.save(company=self.request.user.company)
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_authenticated and self.request.user.company:
+        if self.request.user.is_authenticated and hasattr(self.request.user, 'company'):
             if self.request.user.is_staff:
                 return ProductService.objects.all()
             return ProductService.objects.filter(
@@ -112,7 +139,7 @@ class ProductServiceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):
         product = self.get_object()
-        if product.company.user != request.user:
+        if product.company.user != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only deactivate your own products"
             )
@@ -123,7 +150,7 @@ class ProductServiceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         product = self.get_object()
-        if product.company.user != request.user:
+        if product.company.user != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only activate your own products"
             )
@@ -139,7 +166,7 @@ class ProductImageViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         product_service = serializer.validated_data['product_service']
-        if product_service.company.user != self.request.user:
+        if product_service.company.user != self.request.user and not self.request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only add images for your own products"
             )
@@ -147,7 +174,7 @@ class ProductImageViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_authenticated and self.request.user.company:
+        if self.request.user.is_authenticated and hasattr(self.request.user, 'company'):
             return queryset.filter(
                 Q(product_service__company=self.request.user.company) | 
                 Q(product_service__is_active=True)
@@ -165,7 +192,7 @@ class PriceListViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         product_service = serializer.validated_data['product_service']
-        if product_service.company.user != self.request.user:
+        if product_service.company.user != self.request.user and not self.request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only add prices for your own products"
             )
@@ -174,7 +201,7 @@ class PriceListViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):
         price = self.get_object()
-        if price.product_service.company.user != request.user:
+        if price.product_service.company.user != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only deactivate your own prices"
             )
@@ -185,7 +212,7 @@ class PriceListViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         price = self.get_object()
-        if price.product_service.company.user != request.user:
+        if price.product_service.company.user != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only activate your own prices"
             )
@@ -205,7 +232,6 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         quote = serializer.save(customer=self.request.user)
-        # Create notification for company
         Notification.objects.create(
             user=quote.product_service.company.user,
             message=f"New quote request for {quote.product_service.name}",
@@ -224,7 +250,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
         quote = self.get_object()
-        if quote.product_service.company.user != request.user:
+        if quote.product_service.company.user != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only accept quotes for your own products"
             )
@@ -241,7 +267,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         quote = self.get_object()
-        if quote.product_service.company.user != request.user:
+        if quote.product_service.company.user != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only reject quotes for your own products"
             )
@@ -258,7 +284,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         quote = self.get_object()
-        if quote.customer != request.user:
+        if quote.customer != request.user and not request.user.is_staff:
             raise permissions.PermissionDenied(
                 "You can only cancel your own quotes"
             )

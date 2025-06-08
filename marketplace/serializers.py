@@ -9,33 +9,17 @@ from rest_framework.validators import UniqueTogetherValidator
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
-        fields = [
-            'id', 'name', 'slug', 'description', 'created_at'
-        ]
+        fields = ['id', 'name', 'slug', 'description', 'created_at']
         read_only_fields = ['slug', 'created_at']
 
-class SubCategorySerializer(serializers.ModelSerializer):
-    category = CategorySerializer(read_only=True)
-    category_id = serializers.PrimaryKeyRelatedField(
-        queryset=Category.objects.all(),
-        source='category',
-        write_only=True
-    )
-
+class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
-        model = SubCategory
+        model = ProductImage
         fields = [
-            'id', 'name', 'slug', 'category', 'category_id',
-            'description', 'created_at'
+            'id', 'product_service', 'image', 'caption',
+            'is_primary', 'created_at'
         ]
-        read_only_fields = ['slug', 'created_at']
-        validators = [
-            UniqueTogetherValidator(
-                queryset=SubCategory.objects.all(),
-                fields=['category', 'slug'],
-                message='This subcategory slug already exists for this category.'
-            )
-        ]
+        read_only_fields = ['created_at']
 
 class PriceListSerializer(serializers.ModelSerializer):
     class Meta:
@@ -57,20 +41,11 @@ class PriceListSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Minimum quantity must be at least 1")
         return value
 
-class ProductImageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ProductImage
-        fields = [
-            'id', 'product_service', 'image', 'caption',
-            'is_primary', 'created_at'
-        ]
-        read_only_fields = ['created_at']
-
 class ProductServiceSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     prices = PriceListSerializer(many=True, read_only=True)
     category = CategorySerializer(read_only=True)
-    subcategory = SubCategorySerializer(read_only=True)
+    subcategory = serializers.PrimaryKeyRelatedField(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
         source='category',
@@ -98,6 +73,27 @@ class ProductServiceSerializer(serializers.ModelSerializer):
                 "Subcategory must belong to the selected category"
             )
         return data
+
+class SubCategorySerializer(serializers.ModelSerializer):
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.all(),
+        source='category',
+        write_only=True
+    )
+    products = ProductServiceSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SubCategory
+        fields = ['id', 'name', 'slug', 'category', 'category_id', 'description', 'created_at', 'products']
+        read_only_fields = ['slug', 'created_at', 'products']
+        validators = [
+            UniqueTogetherValidator(
+                queryset=SubCategory.objects.all(),
+                fields=['category', 'slug'],
+                message='This subcategory slug already exists for this category.'
+            )
+        ]
 
 class CompanyReviewSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
@@ -178,17 +174,31 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         if 'parent' in data and data['parent']:
-            # Ensure parent message is between the same users
             parent = data['parent']
             sender = self.context['request'].user
             receiver = data['receiver']
-            
             if (parent.sender != sender and parent.sender != receiver) or \
                (parent.receiver != sender and parent.receiver != receiver):
                 raise serializers.ValidationError(
                     "Parent message must be part of the same conversation"
                 )
         return data
+
+class CategoryWithSubcategoriesSerializer(serializers.ModelSerializer):
+    subcategories = SubCategorySerializer(many=True, required=False)
+
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'slug', 'description', 'created_at', 'subcategories']
+        read_only_fields = ['slug', 'created_at']
+
+    def create(self, validated_data):
+        subcategories_data = validated_data.pop('subcategories', [])
+        category = Category.objects.create(**validated_data)
+        for subcategory_data in subcategories_data:
+            subcategory_data['category'] = category
+            SubCategory.objects.create(**subcategory_data)
+        return category
 
 class NotificationSerializer(serializers.ModelSerializer):
     related_quote = QuoteRequestSerializer(read_only=True)
