@@ -1,19 +1,41 @@
+# accounts/urls.py
+
 from django.urls import path
-from . import views
+from .views import (
+    UserRegistrationView,
+    CompanyListView, CompanyDetailView,
+    CompanyUserManagementView, CompanyUserDetailView,
+    InvitationListView, InvitationDetailView, InvitationAcceptanceView,
+    DocumentManagementView, DocumentDetailView,
+    UserProfileView,
+    OwnerCompanyListView, AdminCompanyListView,
+    PublicInvitationAcceptanceView,  # ← imported here
+)
 
 urlpatterns = [
-    path('companies/', views.CompanyListView.as_view(), name='company-list'),
-    path('companies/<uuid:id>/', views.CompanyDetailView.as_view(), name='company-detail'),
-    path('companies/<uuid:company_id>/users/', views.CompanyUserManagementView.as_view(), name='company-users'),
-    path('companies/<uuid:company_id>/users/<int:id>/', views.CompanyUserDetailView.as_view(), name='company-user-detail'),
-    path('companies/<uuid:company_id>/invitations/', views.InvitationListView.as_view(), name='invitation-list'),
-    path('companies/<uuid:company_id>/invitations/<int:id>/', views.InvitationDetailView.as_view(), name='invitation-detail'),
-    path('companies/<uuid:company_id>/documents/', views.DocumentManagementView.as_view(), name='document-list'),
-    path('companies/<uuid:company_id>/documents/<int:id>/', views.DocumentDetailView.as_view(), name='document-detail'),
-    path('profile/', views.UserProfileView.as_view(), name='user-profile'),
-    path('accept-invitation/<str:token>/', views.InvitationAcceptanceView.as_view(), name='accept-invitation'),
-    # New URL for owners to list their companies
-    path('companies/owner/', views.OwnerCompanyListView.as_view(), name='owner-company-list'),
-    # New URL for admins to list all companies
-    path('companies/admin/', views.AdminCompanyListView.as_view(), name='admin-company-list'),
+    path('auth/register/', UserRegistrationView.as_view(), name='user-register'),
+
+    path('companies/', CompanyListView.as_view(), name='company-list'),
+    path('companies/owner/', OwnerCompanyListView.as_view(), name='owner-company-list'),
+    path('companies/admin/', AdminCompanyListView.as_view(), name='admin-company-list'),
+    path('companies/<uuid:id>/', CompanyDetailView.as_view(), name='company-detail'),
+
+    path('companies/<uuid:company_id>/users/', CompanyUserManagementView.as_view(), name='company-users'),
+    path('companies/<uuid:company_id>/users/<int:id>/', CompanyUserDetailView.as_view(), name='company-user-detail'),
+
+    path('companies/<uuid:company_id>/invitations/', InvitationListView.as_view(), name='invitation-list'),
+    path('companies/<uuid:company_id>/invitations/<int:id>/', InvitationDetailView.as_view(), name='invitation-detail'),
+    path('companies/<uuid:company_id>/accept-invitation/<str:token>/', InvitationAcceptanceView.as_view(), name='accept-invitation'),
+
+    path('companies/<uuid:company_id>/documents/', DocumentManagementView.as_view(), name='document-list'),
+    path('companies/<uuid:company_id>/documents/<int:id>/', DocumentDetailView.as_view(), name='document-detail'),
+
+    path('profile/', UserProfileView.as_view(), name='user-profile'),
+
+    # Public, token-only invitation accept (no company_id)
+    path(
+        'accept-invitation/<str:token>/',
+        PublicInvitationAcceptanceView.as_view(),
+        name='public-accept-invitation'
+    ),
 ]

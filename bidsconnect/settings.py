@@ -224,7 +224,7 @@ CORS_ALLOW_HEADERS = [
 # Additional recommended settings
 
 # Site URL for Djoser (used in email templates, etc.)
-SITE_URL = 'http://localhost:8000'
+SITE_URL = 'http://localhost:8000/api/v1/accounts'
 
 # Invitation expiry for Djoser
 INVITATION_EXPIRY_DAYS = 7
@@ -236,3 +236,6 @@ CSRF_COOKIE_SECURE = False  # Set to True in production with HTTPS
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
+
+# settings.py
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

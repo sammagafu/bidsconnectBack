@@ -1,4 +1,4 @@
-# tenders/models.py
+
 from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -105,36 +105,38 @@ class Tender(models.Model):
         ('Public Sector', 'Public Sector Tendering'),
         ('Non-Governmental Organization', 'Non-Governmental Organization Tendering'),  
         ('Government Agency', 'Government Agency Tendering'),
-
     )
-    
+    TenderSecurityType = (
+        ("Tender Security", "Tender Security"),
+        ("Tender Securing Declaration", "Tender Securing Declaration"),
+    )
+     
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True, blank=True)
     reference_number = models.CharField(max_length=50, unique=True)
-    tender_type_country = models.CharField(max_length=30, choices=TenderTypeCountry,default='National')
-    tender_type_sector = models.CharField(max_length=30, choices=TenderTypeSector,default='Private Company')
+    tender_type_country = models.CharField(max_length=30, choices=TenderTypeCountry, default='National')
+    tender_type_sector = models.CharField(max_length=30, choices=TenderTypeSector, default='Private Company')
     tenderdescription = models.TextField(default="tender description to be updated")
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True)
     subcategory = models.ForeignKey(SubCategory, on_delete=models.SET_NULL, null=True)
     procurement_process = models.ForeignKey(ProcurementProcess, on_delete=models.SET_NULL, null=True)
-
     publication_date = models.DateTimeField(default=timezone.now)
     submission_deadline = models.DateTimeField()
     clarification_deadline = models.DateTimeField()
     evaluation_start_date = models.DateTimeField(null=True, blank=True)
     evaluation_end_date = models.DateTimeField(null=True, blank=True)
-    
-    estimated_budget = models.DecimalField(max_digits=16, decimal_places=2)
-    currency = models.CharField(max_length=3, default='TSH')
-    bid_bond_percentage = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    
+    tender_fees = models.DecimalField(max_digits=16, decimal_places=2)
+    tender_securing_type = models.CharField(max_length=30, default='Tender Security', choices=TenderSecurityType)
+    tender_Security_percentage = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], blank=True, null=True)
+    tender_Security_amount = models.DecimalField(max_digits=16, decimal_places=2, validators=[MinValueValidator(0)], blank=True, null=True)
     address = models.TextField()
+    tender_phonenumber = models.CharField(max_length=15, blank=True, null=True)
+    tender_email = models.EmailField(blank=True, null=True)
+    tender_website = models.URLField(blank=True, null=True)
     created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_tenders')
-    evaluation_committee = models.ManyToManyField(CustomUser, related_name='evaluation_tenders', blank=True)
-    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    tenderdocument = models.FileField(upload_to='tender_documents/%Y/%m/', blank=True, null=True)
     last_status_change = models.DateTimeField(auto_now=True)
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)
@@ -339,7 +341,7 @@ def create_tender_notifications(sender, instance, created, **kwargs):
         for subscription in subscriptions:
             if subscription.keywords:
                 keywords = [k.strip().lower() for k in subscription.keywords.split(',')]
-                content = f"{instance.title} {instance.description}".lower()
+                content = f"{instance.title} {instance.tenderdescription}".lower()
                 if not any(keyword in content for keyword in keywords):
                     continue
 
