@@ -1,5 +1,3 @@
-# accounts/models.py
-
 import uuid
 import secrets
 from datetime import timedelta
@@ -8,6 +6,7 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 from django.core.exceptions import ValidationError
+
 from django.conf import settings
 from django.contrib.auth.models import (
     AbstractBaseUser, PermissionsMixin, BaseUserManager, Group, Permission
@@ -15,10 +14,14 @@ from django.contrib.auth.models import (
 from django.db.models import Avg
 
 from .constants import (
-    ROLE_CHOICES, DOCUMENT_TYPE_CHOICES, DOCUMENT_CATEGORY_CHOICES,
-    MAX_COMPANY_USERS, MAX_COMPANIES_PER_USER,
-    DEFAULT_DOCUMENT_EXPIRY_DAYS, DOCUMENT_EXPIRY_NOTIFICATION_DAYS,
-    INVITATION_EXPIRY_DAYS
+    ROLE_CHOICES,
+    DOCUMENT_TYPE_CHOICES,
+    DOCUMENT_CATEGORY_CHOICES,
+    MAX_COMPANY_USERS,
+    MAX_COMPANIES_PER_USER,
+    DEFAULT_DOCUMENT_EXPIRY_DAYS,
+    DOCUMENT_EXPIRY_NOTIFICATION_DAYS,
+    INVITATION_EXPIRY_DAYS,
 )
 
 
@@ -122,10 +125,12 @@ class Company(models.Model):
         return self.name
 
     def clean(self):
-        # Maximum companies per user
+        """
+        Ensure a user can only own one company.
+        """
         existing = self.owner.companies.filter(deleted_at__isnull=True).exclude(id=self.id).count()
         if existing >= MAX_COMPANIES_PER_USER:
-            raise ValidationError(f"Max of {MAX_COMPANIES_PER_USER} companies per user.")
+            raise ValidationError(f"A user can only own {MAX_COMPANIES_PER_USER} company.")
 
     def save(self, *args, **kwargs):
         with transaction.atomic():
@@ -134,7 +139,6 @@ class Company(models.Model):
                 self.slug = str(self.id)
             super().save(*args, **kwargs)
             # Ensure owner is in CompanyUser
-            from .models import CompanyUser
             if not self.company_users.filter(user=self.owner).exists():
                 CompanyUser.objects.create(company=self, user=self.owner, role='owner')
 
@@ -149,7 +153,6 @@ class Company(models.Model):
         self.is_verified = True
         self.verification_date = timezone.now()
         self.save(update_fields=['is_verified', 'verification_date'])
-        from .models import AuditLog
         AuditLog.objects.create(
             action="company_verified",
             user=user,
@@ -173,10 +176,16 @@ class CompanyUser(models.Model):
         unique_together = ('company', 'user')
 
     def clean(self):
+        """
+        Enforce:
+        - One owner per company
+        - Max 5 members per company
+        """
         original = CompanyUser.objects.filter(pk=self.pk).first()
         # Prevent demoting owner
         if original and original.role == 'owner' and self.role != 'owner':
             raise ValidationError("Cannot change owner's role.")
+
         # Only one owner
         if self.role == 'owner':
             owners = self.company.company_users.filter(role='owner')
@@ -184,9 +193,12 @@ class CompanyUser(models.Model):
                 owners = owners.exclude(pk=self.pk)
             if owners.exists():
                 raise ValidationError("A company can only have one owner.")
-        # Max users
-        if self._state.adding and self.company.company_users.count() >= MAX_COMPANY_USERS:
-            raise ValidationError(f"Max of {MAX_COMPANY_USERS} users per company.")
+
+        # Max users per company (including owner)
+        if self._state.adding:
+            count = self.company.company_users.count()
+            if count >= MAX_COMPANY_USERS:
+                raise ValidationError(f"A company can only have up to {MAX_COMPANY_USERS} members.")
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -235,9 +247,9 @@ class CompanyDocument(models.Model):
     status = models.CharField(
         max_length=20, choices=[
             ('Approved', 'Approved'),
-            ('Denided', 'Denided'),
+            ('Denied', 'Denied'),
             ('Under Review', 'Under Review')
-        ], default='Approved'
+        ], default='Under Review'
     )
     notification_sent = models.JSONField(default=dict, blank=True)
     notification_attempts = models.JSONField(default=dict, blank=True)
@@ -267,12 +279,9 @@ class CompanyDocument(models.Model):
             self.notification_attempts = {}
 
     def save(self, *args, **kwargs):
-        # Default expiry
         if not self.expires_at:
             self.expires_at = timezone.now() + timedelta(days=DEFAULT_DOCUMENT_EXPIRY_DAYS)
-        # Expired flag
         self.is_expired = self.expires_at < timezone.now()
-        # Reset if extended
         self.reset_notifications()
         self.full_clean()
         super().save(*args, **kwargs)

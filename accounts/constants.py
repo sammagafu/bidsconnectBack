@@ -10,10 +10,13 @@ ROLE_CHOICES = [
 
 # Document types & categories
 DOCUMENT_TYPE_CHOICES = [
-    ('contract', 'Contract'),
-    ('agreement', 'Agreement'),
-    ('report', 'Report'),
+    ('Business License', 'Business License'),
+    ('BRELA',           'BRELA'),
+    ('TIN',             'TIN'),
+    ('Tax Clearance',   'Tax Clearance'),
+    ('Bank Statement',  'Bank Statement'),
 ]
+
 DOCUMENT_CATEGORY_CHOICES = [
     ('legal', 'Legal'),
     ('financial', 'Financial'),

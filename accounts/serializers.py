@@ -8,7 +8,7 @@ from django.contrib.auth.password_validation import validate_password
 from .models import (
     CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument
 )
-from .constants import VALID_FILE_EXTENSIONS, MAX_FILE_SIZE
+from .constants import VALID_FILE_EXTENSIONS, MAX_FILE_SIZE, MAX_COMPANIES_PER_USER, MAX_COMPANY_USERS
 from .permissions import IsCompanyAdminOrOwner
 
 
@@ -69,8 +69,14 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
                 expires_at__gt=timezone.now(),
                 company__deleted_at__isnull=True
             )
+            # Enforce max members when accepting
+            company = invitation.company
+            if company.company_users.count() >= MAX_COMPANY_USERS:
+                raise serializers.ValidationError(
+                    "Cannot accept invitation: company already has maximum members."
+                )
             CompanyUser.objects.create(
-                company=invitation.company,
+                company=company,
                 user=user,
                 role=invitation.role
             )
@@ -115,6 +121,18 @@ class CompanySerializer(serializers.ModelSerializer):
     def get_owner_email(self, obj):
         return obj.owner.email
 
+    def validate(self, attrs):
+        request = self.context['request']
+        user = request.user
+        # Ensure one company per user on create
+        if self.instance is None and Company.objects.filter(
+            owner=user, deleted_at__isnull=True
+        ).exists():
+            raise serializers.ValidationError(
+                { 'owner': f"A user can only own {MAX_COMPANIES_PER_USER} company." }
+            )
+        return attrs
+
     def validate_name(self, value):
         if Company.objects.filter(
             name__iexact=value, deleted_at__isnull=True
@@ -127,15 +145,36 @@ class CompanySerializer(serializers.ModelSerializer):
 
 class CompanyUserSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
+
     class Meta:
         model = CompanyUser
         fields = ('id', 'user', 'user_email', 'role')
         read_only_fields = ('id', 'user_email')
 
-    def validate_role(self, val):
-        if self.instance and self.instance.role == 'owner' and val != 'owner':
+    def validate(self, attrs):
+        request = self.context.get('request')
+        view = self.context.get('view')
+        # Determine company from URL kwargs
+        company_id = view.kwargs.get('company_id')
+        company = get_object_or_404(Company, id=company_id, deleted_at__isnull=True)
+        # On create, enforce max members
+        if self.instance is None:
+            if company.company_users.count() >= MAX_COMPANY_USERS:
+                raise serializers.ValidationError(
+                    f"A company can only have up to {MAX_COMPANY_USERS} members."
+                )
+        # Prevent demoting owner
+        if self.instance and self.instance.role == 'owner' and attrs.get('role') != 'owner':
             raise serializers.ValidationError("Cannot change owner's role.")
-        return val
+        return attrs
+
+    def create(self, validated_data):
+        view = self.context.get('view')
+        company_id = view.kwargs.get('company_id')
+        validated_data['company'] = get_object_or_404(
+            Company, id=company_id, deleted_at__isnull=True
+        )
+        return super().create(validated_data)
 
 
 class CompanyInvitationSerializer(serializers.ModelSerializer):
@@ -157,22 +196,31 @@ class CompanyInvitationSerializer(serializers.ModelSerializer):
         if not cid:
             raise serializers.ValidationError({"company": "Company ID is required in URL."})
         company = get_object_or_404(Company, id=cid, deleted_at__isnull=True)
+        # Permission check
         if not IsCompanyAdminOrOwner().has_permission(request, view):
             raise serializers.ValidationError(
                 {"company": "No permission to invite to this company."}
             )
+        # Already a member
         if CompanyUser.objects.filter(company=company, user__email=attrs['invited_email']).exists():
             raise serializers.ValidationError(
                 {"invited_email": "User already in this company."}
             )
+        # Pending invitation
         if CompanyInvitation.objects.filter(
             company=company, invited_email=attrs['invited_email'], accepted=False
         ).exists():
             raise serializers.ValidationError(
                 {"invited_email": "An invitation is already pending."}
             )
+        # Cannot invite owner
         if attrs['role'] == 'owner':
             raise serializers.ValidationError({"role": "Cannot invite an owner."})
+        # Max members per company
+        if company.company_users.count() >= MAX_COMPANY_USERS:
+            raise serializers.ValidationError(
+                {"company": f"A company can only have up to {MAX_COMPANY_USERS} members."}
+            )
         attrs['company'] = company
         return attrs
 

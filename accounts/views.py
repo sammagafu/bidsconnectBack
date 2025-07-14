@@ -1,5 +1,3 @@
-# accounts/views.py
-
 import logging
 from datetime import timedelta
 
@@ -27,6 +25,7 @@ from .serializers import (
 from .permissions import (
     IsCompanyOwner, IsCompanyAdminOrOwner, IsCompanyMember
 )
+from .constants import MAX_COMPANY_USERS, MAX_COMPANIES_PER_USER
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +48,11 @@ class CompanyListView(generics.ListCreateAPIView):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        # Enforce one company per user
+        if Company.objects.filter(owner=self.request.user, deleted_at__isnull=True).exists():
+            raise ValidationError({
+                'detail': f"A user can only own {MAX_COMPANIES_PER_USER} company."}
+            )
         comp = serializer.save(
             owner=self.request.user,
             created_by=self.request.user
@@ -94,8 +98,14 @@ class CompanyUserManagementView(generics.ListCreateAPIView):
             Company, id=self.kwargs['company_id'], deleted_at__isnull=True
         )
         user = serializer.validated_data['user']
+        # Prevent duplicates
         if CompanyUser.objects.filter(company=company, user=user).exists():
             raise ValidationError({"user": "Already in this company"})
+        # Enforce max members per company
+        if company.company_users.count() >= MAX_COMPANY_USERS:
+            raise ValidationError({
+                'detail': f"A company can only have up to {MAX_COMPANY_USERS} members."}
+            )
         cu = serializer.save(company=company)
         AuditLog.objects.create(
             action='company_user_added',
@@ -132,9 +142,16 @@ class InvitationListView(generics.ListCreateAPIView):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        # The serializer has validated max members, but double-check
+        inv_data = serializer.validated_data
+        company = inv_data['company']
+        if company.company_users.count() >= MAX_COMPANY_USERS:
+            raise ValidationError({
+                'detail': f"A company can only have up to {MAX_COMPANY_USERS} members."}
+            )
         inv = serializer.save(invited_by=self.request.user)
 
-        # Build the correct accept-URL to our API endpoint
+        # Build accept-URL
         accept_path = reverse(
             'accept-invitation',
             args=[inv.company.id, inv.token]
@@ -173,7 +190,7 @@ class InvitationDetailView(generics.RetrieveDestroyAPIView):
 class InvitationAcceptanceView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_classes = [UserRateThrottle]
-    serializer_class = serializers.Serializer  # no input body expected
+    serializer_class = serializers.Serializer  # no input
 
     @transaction.atomic
     def post(self, request, token):
@@ -185,8 +202,15 @@ class InvitationAcceptanceView(generics.GenericAPIView):
             expires_at__gt=timezone.now(),
             company__deleted_at__isnull=True
         )
+        # Already in company
         if CompanyUser.objects.filter(company=inv.company, user=request.user).exists():
             raise ValidationError("Already in this company")
+        # Enforce max members
+        if inv.company.company_users.count() >= MAX_COMPANY_USERS:
+            raise ValidationError(
+                f"Cannot accept invitation: company already has maximum members."
+            )
+        # Cannot invite owner
         if inv.role == 'owner' and inv.company.company_users.filter(role='owner').exists():
             raise ValidationError("Owner already exists")
 
@@ -292,6 +316,12 @@ class PublicInvitationAcceptanceView(generics.GenericAPIView):
             return Response({"detail": "This invitation is not for your account."}, status=403)
         if CompanyUser.objects.filter(company=inv.company, user=request.user).exists():
             return Response({"detail": "Already a member."}, status=400)
+        # Enforce max members
+        if inv.company.company_users.count() >= MAX_COMPANY_USERS:
+            return Response(
+                {"detail": "Cannot accept invitation: company already has maximum members."},
+                status=400
+            )
 
         CompanyUser.objects.create(company=inv.company, user=request.user, role=inv.role)
         inv.accepted = True
