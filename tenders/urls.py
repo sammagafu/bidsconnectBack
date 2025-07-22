@@ -1,24 +1,28 @@
-from django.urls import path, include
+# urls.py
+
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .views import (
-    CategoryViewSet, SubCategoryViewSet, ProcurementProcessViewSet, TenderViewSet,
-    TenderDocumentViewSet, TenderSubscriptionViewSet, NotificationPreferenceViewSet,
-    TenderNotificationViewSet, CategoriesWithSubcategoriesView
+    CategoryViewSet, SubCategoryViewSet, CategoryWithSubcategoriesViewSet,
+    ProcurementProcessViewSet, AgencyDetailsViewSet,
+    TenderViewSet, TenderRequiredDocumentViewSet,
+    TenderSubscriptionViewSet, NotificationPreferenceViewSet,
+    TenderNotificationViewSet, TenderStatusHistoryViewSet
 )
 
-# Create a router and register viewsets
 router = DefaultRouter()
-router.register(r'categories', CategoryViewSet)
-router.register(r'subcategories', SubCategoryViewSet)
-router.register(r'procurement-processes', ProcurementProcessViewSet)
-router.register(r'tenders', TenderViewSet)
-router.register(r'tender-documents', TenderDocumentViewSet)
-router.register(r'subscriptions', TenderSubscriptionViewSet)
-router.register(r'notification-preferences', NotificationPreferenceViewSet)
-router.register(r'notifications', TenderNotificationViewSet)
+router.register(r'categories', CategoryViewSet, basename='category')
+router.register(r'subcategories', SubCategoryViewSet, basename='subcategory')
+router.register(r'categories-with-subcategories', CategoryWithSubcategoriesViewSet, basename='cat-with-subs')
+router.register(r'procurement-processes', ProcurementProcessViewSet, basename='procurement')
+router.register(r'agencies', AgencyDetailsViewSet, basename='agency')
+router.register(r'tenders', TenderViewSet, basename='tender')
+router.register(r'tender-documents', TenderRequiredDocumentViewSet, basename='tender-doc')
+router.register(r'subscriptions', TenderSubscriptionViewSet, basename='subscription')
+router.register(r'notification-preferences', NotificationPreferenceViewSet, basename='notify-pref')
+router.register(r'tender-notifications', TenderNotificationViewSet, basename='tender-notif')
+router.register(r'tender-status-history', TenderStatusHistoryViewSet, basename='tender-status')
 
-# Define URL patterns
 urlpatterns = [
     path('', include(router.urls)),
-    path('categories-with-subcategories/', CategoriesWithSubcategoriesView.as_view(), name='categories-with-subcategories'),
 ]

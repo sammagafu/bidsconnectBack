@@ -35,7 +35,7 @@ class Category(models.Model):
 class SubCategory(models.Model):
     name = models.CharField(max_length=100)
     slug = models.SlugField(max_length=100, blank=True)
-    category = models.ForeignKey(Category, on_delete=models.CASCADE)
+    category = models.ForeignKey(Category, on_delete=models.CASCADE,related_name='subcategories',)
     description = models.TextField(blank=True)
     
     class Meta:
@@ -53,6 +53,37 @@ class SubCategory(models.Model):
             self.slug = base_slug
             counter = 1
             while SubCategory.objects.filter(category=self.category, slug=self.slug).exclude(pk=self.pk).exists():
+                self.slug = f"{base_slug}-{counter}"
+                counter += 1
+        super().save(*args, **kwargs)
+
+class AgencyDetails(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True)
+    description = models.TextField(blank=True)
+    logo = models.ImageField(upload_to='agency_logos/%Y/%m/', blank=True, null=True)
+    address = models.TextField(blank=True)
+    phone_number = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    website = models.URLField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Agency"
+        verbose_name_plural = "Agencies"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            self.slug = base_slug
+            counter = 1
+            while AgencyDetails.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
                 self.slug = f"{base_slug}-{counter}"
                 counter += 1
         super().save(*args, **kwargs)
@@ -103,14 +134,14 @@ class Tender(models.Model):
     TenderTypeSector = (
         ('Private Company', 'Private Company Tendering'),
         ('Public Sector', 'Public Sector Tendering'),
-        ('Non-Governmental Organization', 'Non-Governmental Organization Tendering'),  
+        ('Non-Governmental Organization', 'Non-Governmental Organization Tendering'),
         ('Government Agency', 'Government Agency Tendering'),
     )
     TenderSecurityType = (
         ("Tender Security", "Tender Security"),
         ("Tender Securing Declaration", "Tender Securing Declaration"),
     )
-     
+
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True, blank=True)
     reference_number = models.CharField(max_length=50, unique=True)
@@ -120,6 +151,8 @@ class Tender(models.Model):
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True)
     subcategory = models.ForeignKey(SubCategory, on_delete=models.SET_NULL, null=True)
     procurement_process = models.ForeignKey(ProcurementProcess, on_delete=models.SET_NULL, null=True)
+    agency = models.ForeignKey('AgencyDetails', on_delete=models.SET_NULL, null=True, related_name='tenders')  # NEW
+
     publication_date = models.DateTimeField(default=timezone.now)
     submission_deadline = models.DateTimeField()
     clarification_deadline = models.DateTimeField()
@@ -129,13 +162,9 @@ class Tender(models.Model):
     tender_securing_type = models.CharField(max_length=30, default='Tender Security', choices=TenderSecurityType)
     tender_Security_percentage = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], blank=True, null=True)
     tender_Security_amount = models.DecimalField(max_digits=16, decimal_places=2, validators=[MinValueValidator(0)], blank=True, null=True)
-    address = models.TextField()
-    tender_phonenumber = models.CharField(max_length=15, blank=True, null=True)
-    tender_email = models.EmailField(blank=True, null=True)
-    tender_website = models.URLField(blank=True, null=True)
+
     created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_tenders')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    tenderdocument = models.FileField(upload_to='tender_documents/%Y/%m/', blank=True, null=True)
     last_status_change = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -162,10 +191,14 @@ class Tender(models.Model):
                 counter += 1
         super().save(*args, **kwargs)
 
-class TenderDocument(models.Model):
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='documents')
-    file = models.FileField(upload_to='tender_documents/%Y/%m/')
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+class TenderRequiredDocument(models.Model):
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='required_documents')
+    name = models.CharField(max_length=255)  # e.g., 'Tax Clearance Certificate'
+    description = models.TextField(blank=True)
+    document_type = models.CharField(max_length=100, blank=True)  # e.g., 'PDF', 'Word', 'Image'
+
+    def __str__(self):
+        return f"{self.name} for {self.tender.title}"
 
     def __str__(self):
         return f"Document for {self.tender.title}"

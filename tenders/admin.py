@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from .models import (
-    Category, SubCategory, ProcurementProcess, Tender, TenderDocument,
+    Category, SubCategory, ProcurementProcess, AgencyDetails, Tender, TenderRequiredDocument,
     TenderSubscription, NotificationPreference, TenderNotification, TenderStatusHistory
 )
 
@@ -27,15 +27,20 @@ class ProcurementProcessAdmin(admin.ModelAdmin):
     list_filter = ('type', 'name')
     search_fields = ('name', 'slug', 'description')
 
+@admin.register(AgencyDetails)
+class AgencyDetailsAdmin(admin.ModelAdmin):
+    list_display = ('id', 'name', 'slug', 'email', 'phone_number', 'website')
+    list_filter = ('name',)
+    search_fields = ('name', 'email', 'phone_number', 'website')
+
 @admin.register(Tender)
 class TenderAdmin(admin.ModelAdmin):
-    list_display = ('id', 'title', 'reference_number', 'status', 'category_name', 'subcategory_name', 'procurement_process_name')
+    list_display = ('id', 'title', 'reference_number', 'status', 'category_name', 'subcategory_name', 'procurement_process_name', 'agency_name')
     list_filter = ('status', 'category', 'subcategory', 'procurement_process', 'tender_type_country', 'tender_type_sector')
     search_fields = ('title', 'reference_number', 'tenderdescription')
     readonly_fields = ('created_by', 'created_at', 'updated_at', 'last_status_change')
 
     def clean(self):
-        """Validate that when tender_securing_type is 'Tender Security', either percentage or amount is provided."""
         data = self.cleaned_data
         if data.get('tender_securing_type') == 'Tender Security':
             if not (data.get('tender_Security_percentage') or data.get('tender_Security_amount')):
@@ -45,8 +50,7 @@ class TenderAdmin(admin.ModelAdmin):
         return data
 
     def save_model(self, request, obj, form, change):
-        """Ensure form validation is called before saving."""
-        form.full_clean()  # Trigger clean method
+        form.full_clean()
         super().save_model(request, obj, form, change)
 
     def category_name(self, obj):
@@ -61,11 +65,15 @@ class TenderAdmin(admin.ModelAdmin):
         return obj.procurement_process.name if obj.procurement_process else '-'
     procurement_process_name.short_description = 'Procurement Process'
 
-@admin.register(TenderDocument)
-class TenderDocumentAdmin(admin.ModelAdmin):
-    list_display = ('id', 'tender_title', 'file', 'uploaded_at')
-    list_filter = ('uploaded_at',)
-    search_fields = ('tender__title',)
+    def agency_name(self, obj):
+        return obj.agency.name if obj.agency else '-'
+    agency_name.short_description = 'Agency'
+
+@admin.register(TenderRequiredDocument)
+class TenderRequiredDocumentAdmin(admin.ModelAdmin):
+    list_display = ('id', 'tender_title', 'name', 'document_type')
+    list_filter = ('document_type',)
+    search_fields = ('tender__title', 'name')
 
     def tender_title(self, obj):
         return obj.tender.title
