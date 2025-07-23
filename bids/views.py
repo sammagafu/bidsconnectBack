@@ -1,112 +1,82 @@
 # bids/views.py
-from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
-from .models import (
-    Bid, BidDocument, EvaluationCriterion, EvaluationResponse,
-    Contract, AuditLog
-)
-from .serializers import (
-    BidSerializer, BidDocumentSerializer, EvaluationCriterionSerializer,
-    EvaluationResponseSerializer, ContractSerializer, AuditLogSerializer
-)
 
-class BidListCreateView(generics.ListCreateAPIView):
+from .models import Bid, BidDocument, AuditLog
+from .serializers import BidSerializer, BidDocumentSerializer, AuditLogSerializer
+
+
+class BidViewSet(viewsets.ModelViewSet):
+    @action(detail=False, methods=['get'], url_path='by-company')
+    def by_company(self, request):
+        """
+        Returns all bids submitted by a specific company. Pass company_id as a query parameter.
+        """
+        company_id = request.query_params.get('company_id')
+        if not company_id:
+            return Response({'detail': 'company_id query parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = self.get_queryset().filter(company_id=company_id)
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+    """
+    Authenticated users can list/create/update their bids w/ nested docs.
+    Admins can change any bid’s status.
+    """
     queryset = Bid.objects.all()
     serializer_class = BidSerializer
-
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [AllowAny()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        if self.request.user.is_authenticated and self.request.user.is_staff:
-            return queryset
-        return queryset.filter(tender__status='published')
+        user = self.request.user
+        return Bid.objects.all() if user.is_staff else Bid.objects.filter(bidder=user)
 
-    def perform_create(self, serializer):
-        serializer.save(bidder=self.request.user)
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        if self.action in ['update', 'partial_update']:
+            ctx['bid_instance'] = self.get_object()
+        return ctx
 
-class BidRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Bid.objects.all()
-    serializer_class = BidSerializer
-    lookup_field = 'id'  # UUID is the primary key, so 'id' is fine
+    def create(self, request, *args, **kwargs):
+        # Ensure nested file uploads get saved
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [AllowAny()]
-        return [IsAuthenticated()]
-
-    def perform_update(self, serializer):
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser], url_path='change-status')
+    def change_status(self, request, pk=None):
         bid = self.get_object()
-        if bid.status not in ['draft']:
-            return Response({"detail": "Can only update draft bids."}, status=status.HTTP_403_FORBIDDEN)
-        serializer.save()
+        new_status = request.data.get('status')
+        if new_status not in [c[0] for c in Bid.STATUS_CHOICES]:
+            return Response({'detail': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
+        bid.status = new_status
+        bid.save()
+        return Response(self.get_serializer(bid).data)
 
-    def perform_destroy(self, bid):
-        if bid.status not in ['draft', 'withdrawn']:
-            return Response({"detail": "Can only delete draft or withdrawn bids."}, status=status.HTTP_403_FORBIDDEN)
-        bid.delete()
 
-class BidDocumentListCreateView(generics.ListCreateAPIView):
+class BidDocumentViewSet(viewsets.ModelViewSet):
+    """
+    CRUD on individual bid documents (supports file uploads).
+    """
     queryset = BidDocument.objects.all()
     serializer_class = BidDocumentSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
-    def perform_create(self, serializer):
-        bid = get_object_or_404(Bid, id=self.request.data.get('bid'))
-        if bid.bidder != self.request.user and not self.request.user.is_staff:
-            return Response({"detail": "You can only upload documents for your own bids."}, status=status.HTTP_403_FORBIDDEN)
-        serializer.save()
 
-class BidDocumentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = BidDocument.objects.all()
-    serializer_class = BidDocumentSerializer
-    permission_classes = [IsAuthenticated]
-
-class EvaluationCriterionListCreateView(generics.ListCreateAPIView):
-    queryset = EvaluationCriterion.objects.all()
-    serializer_class = EvaluationCriterionSerializer
-    permission_classes = [IsAdminUser]
-
-class EvaluationCriterionRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = EvaluationCriterion.objects.all()
-    serializer_class = EvaluationCriterionSerializer
-    permission_classes = [IsAdminUser]
-    lookup_field = 'id'
-
-class EvaluationResponseListCreateView(generics.ListCreateAPIView):
-    queryset = EvaluationResponse.objects.all()
-    serializer_class = EvaluationResponseSerializer
-    permission_classes = [IsAdminUser]
-
-    def perform_create(self, serializer):
-        serializer.save(evaluated_by=self.request.user)
-
-class EvaluationResponseRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = EvaluationResponse.objects.all()
-    serializer_class = EvaluationResponseSerializer
-    permission_classes = [IsAdminUser]
-    lookup_field = 'id'
-
-class ContractListCreateView(generics.ListCreateAPIView):
-    queryset = Contract.objects.all()
-    serializer_class = ContractSerializer
-    permission_classes = [IsAdminUser]
-
-    def perform_create(self, serializer):
-        serializer.save(signed_by=self.request.user)
-
-class ContractRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Contract.objects.all()
-    serializer_class = ContractSerializer
-    permission_classes = [IsAdminUser]
-    lookup_field = 'id'
-
-class AuditLogListView(generics.ListAPIView):
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only view of audit logs (admin only).
+    """
     queryset = AuditLog.objects.all()
     serializer_class = AuditLogSerializer
     permission_classes = [IsAdminUser]

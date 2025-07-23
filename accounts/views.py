@@ -7,7 +7,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.db import transaction
 from django.urls import reverse
-
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import generics, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -23,7 +23,7 @@ from .serializers import (
     CompanyDocumentSerializer, UserProfileUpdateSerializer
 )
 from .permissions import (
-    IsCompanyOwner, IsCompanyAdminOrOwner, IsCompanyMember
+    IsCompanyOwner, IsCompanyAdminOrOwner
 )
 from .constants import MAX_COMPANY_USERS, MAX_COMPANIES_PER_USER
 
@@ -42,21 +42,21 @@ class CompanyListView(generics.ListCreateAPIView):
     throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
-        return Company.objects.filter(
-            owner=self.request.user, deleted_at__isnull=True
-        ).select_related('owner')
+        return (
+            Company.objects
+            .filter(owner=self.request.user, deleted_at__isnull=True)
+            .select_related('owner')
+            .prefetch_related('company_bids')    # ← prefetch bids to avoid N+1
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
         # Enforce one company per user
         if Company.objects.filter(owner=self.request.user, deleted_at__isnull=True).exists():
             raise ValidationError({
-                'detail': f"A user can only own {MAX_COMPANIES_PER_USER} company."}
-            )
-        comp = serializer.save(
-            owner=self.request.user,
-            created_by=self.request.user
-        )
+                'detail': f"A user can only own {MAX_COMPANIES_PER_USER} company."
+            })
+        comp = serializer.save(owner=self.request.user, created_by=self.request.user)
         AuditLog.objects.create(
             action='company_creation',
             user=self.request.user,
@@ -87,10 +87,14 @@ class CompanyUserManagementView(generics.ListCreateAPIView):
     throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
-        return CompanyUser.objects.filter(
-            company_id=self.kwargs['company_id'],
-            company__deleted_at__isnull=True
-        ).select_related('user', 'company')
+        return (
+            CompanyUser.objects
+            .filter(
+                company_id=self.kwargs['company_id'],
+                company__deleted_at__isnull=True
+            )
+            .select_related('user', 'company')   # ← removed stray trailing dot
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -98,14 +102,12 @@ class CompanyUserManagementView(generics.ListCreateAPIView):
             Company, id=self.kwargs['company_id'], deleted_at__isnull=True
         )
         user = serializer.validated_data['user']
-        # Prevent duplicates
         if CompanyUser.objects.filter(company=company, user=user).exists():
             raise ValidationError({"user": "Already in this company"})
-        # Enforce max members per company
         if company.company_users.count() >= MAX_COMPANY_USERS:
             raise ValidationError({
-                'detail': f"A company can only have up to {MAX_COMPANY_USERS} members."}
-            )
+                'detail': f"A company can only have up to {MAX_COMPANY_USERS} members."
+            })
         cu = serializer.save(company=company)
         AuditLog.objects.create(
             action='company_user_added',
@@ -134,24 +136,26 @@ class InvitationListView(generics.ListCreateAPIView):
     throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
-        return CompanyInvitation.objects.filter(
-            company_id=self.kwargs['company_id'],
-            company__deleted_at__isnull=True,
-            expires_at__gt=timezone.now()
-        ).select_related('company', 'invited_by')
+        return (
+            CompanyInvitation.objects
+            .filter(
+                company_id=self.kwargs['company_id'],
+                company__deleted_at__isnull=True,
+                expires_at__gt=timezone.now()
+            )
+            .select_related('company', 'invited_by')
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
-        # The serializer has validated max members, but double-check
         inv_data = serializer.validated_data
         company = inv_data['company']
         if company.company_users.count() >= MAX_COMPANY_USERS:
             raise ValidationError({
-                'detail': f"A company can only have up to {MAX_COMPANY_USERS} members."}
-            )
+                'detail': f"A company can only have up to {MAX_COMPANY_USERS} members."
+            })
         inv = serializer.save(invited_by=self.request.user)
 
-        # Build accept-URL
         accept_path = reverse(
             'accept-invitation',
             args=[inv.company.id, inv.token]
@@ -202,15 +206,12 @@ class InvitationAcceptanceView(generics.GenericAPIView):
             expires_at__gt=timezone.now(),
             company__deleted_at__isnull=True
         )
-        # Already in company
         if CompanyUser.objects.filter(company=inv.company, user=request.user).exists():
             raise ValidationError("Already in this company")
-        # Enforce max members
         if inv.company.company_users.count() >= MAX_COMPANY_USERS:
             raise ValidationError(
-                f"Cannot accept invitation: company already has maximum members."
+                "Cannot accept invitation: company already has maximum members."
             )
-        # Cannot invite owner
         if inv.role == 'owner' and inv.company.company_users.filter(role='owner').exists():
             raise ValidationError("Owner already exists")
 
@@ -229,12 +230,17 @@ class DocumentManagementView(generics.ListCreateAPIView):
     serializer_class = CompanyDocumentSerializer
     permission_classes = [IsCompanyOwner]
     throttle_classes = [UserRateThrottle]
+    parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
-        return CompanyDocument.objects.filter(
-            company_id=self.kwargs['company_id'],
-            company__deleted_at__isnull=True
-        ).select_related('company', 'uploaded_by')
+        return (
+            CompanyDocument.objects
+            .filter(
+                company_id=self.kwargs['company_id'],
+                company__deleted_at__isnull=True
+            )
+            .select_related('company', 'uploaded_by')
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -316,7 +322,6 @@ class PublicInvitationAcceptanceView(generics.GenericAPIView):
             return Response({"detail": "This invitation is not for your account."}, status=403)
         if CompanyUser.objects.filter(company=inv.company, user=request.user).exists():
             return Response({"detail": "Already a member."}, status=400)
-        # Enforce max members
         if inv.company.company_users.count() >= MAX_COMPANY_USERS:
             return Response(
                 {"detail": "Cannot accept invitation: company already has maximum members."},

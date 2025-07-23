@@ -5,12 +5,38 @@ from django.db.models import Q
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 
+from tenders.models import Tender  # ensure Tender model is imported
+from bids.serializers import BidSerializer
+
 from .models import (
-    CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument
+    CustomUser, Company, CompanyUser,
+    CompanyInvitation, CompanyDocument
 )
-from .constants import VALID_FILE_EXTENSIONS, MAX_FILE_SIZE, MAX_COMPANIES_PER_USER, MAX_COMPANY_USERS
+from .constants import (
+    VALID_FILE_EXTENSIONS, MAX_FILE_SIZE,
+    MAX_COMPANIES_PER_USER, MAX_COMPANY_USERS
+)
 from .permissions import IsCompanyAdminOrOwner
 
+
+# ──────── Tender Summary Serializer ────────
+
+class TenderSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tender
+        fields = ['id', 'title', 'submission_deadline']  # removed 'number' because Tender has no such field
+
+
+# ──────── Extend BidSerializer to include nested tender info ────────
+
+class CompanyBidSerializer(BidSerializer):
+    tender = TenderSummarySerializer(read_only=True)
+
+    class Meta(BidSerializer.Meta):
+        fields = BidSerializer.Meta.fields + ['tender']
+
+
+# ──────── User & Profile Serializers ────────
 
 class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -69,7 +95,6 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
                 expires_at__gt=timezone.now(),
                 company__deleted_at__isnull=True
             )
-            # Enforce max members when accepting
             company = invitation.company
             if company.company_users.count() >= MAX_COMPANY_USERS:
                 raise serializers.ValidationError(
@@ -94,10 +119,17 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         fields = ('email', 'first_name', 'last_name', 'phone_number')
 
 
+# ──────── Company Serializer ────────
+
 class CompanySerializer(serializers.ModelSerializer):
     owner = serializers.HiddenField(default=serializers.CurrentUserDefault())
     slug = serializers.SlugField(read_only=True)
     owner_email = serializers.SerializerMethodField()
+    bids = CompanyBidSerializer(
+        many=True,
+        read_only=True,
+        source='company_bids'
+    )
     created_by = serializers.PrimaryKeyRelatedField(
         queryset=CustomUser.objects.all(),
         default=serializers.CurrentUserDefault(),
@@ -114,7 +146,7 @@ class CompanySerializer(serializers.ModelSerializer):
             'is_verified', 'verification_date', 'employee_count',
             'parent_company', 'owner', 'owner_email',
             'deleted_at', 'created_at', 'updated_at',
-            'created_by'
+            'created_by', 'bids'
         )
         read_only_fields = ('deleted_at', 'created_at', 'updated_at')
 
@@ -124,24 +156,23 @@ class CompanySerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context['request']
         user = request.user
-        # Ensure one company per user on create
         if self.instance is None and Company.objects.filter(
             owner=user, deleted_at__isnull=True
         ).exists():
-            raise serializers.ValidationError(
-                { 'owner': f"A user can only own {MAX_COMPANIES_PER_USER} company." }
-            )
+            raise serializers.ValidationError({
+                'owner': f"A user can only own {MAX_COMPANIES_PER_USER} company."
+            })
         return attrs
 
     def validate_name(self, value):
         if Company.objects.filter(
             name__iexact=value, deleted_at__isnull=True
         ).exists():
-            raise serializers.ValidationError(
-                "A company with this name already exists."
-            )
+            raise serializers.ValidationError("A company with this name already exists.")
         return value
 
+
+# ──────── CompanyUser Serializer ────────
 
 class CompanyUserSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
@@ -154,16 +185,12 @@ class CompanyUserSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context.get('request')
         view = self.context.get('view')
-        # Determine company from URL kwargs
         company_id = view.kwargs.get('company_id')
         company = get_object_or_404(Company, id=company_id, deleted_at__isnull=True)
-        # On create, enforce max members
-        if self.instance is None:
-            if company.company_users.count() >= MAX_COMPANY_USERS:
-                raise serializers.ValidationError(
-                    f"A company can only have up to {MAX_COMPANY_USERS} members."
-                )
-        # Prevent demoting owner
+        if self.instance is None and company.company_users.count() >= MAX_COMPANY_USERS:
+            raise serializers.ValidationError(
+                f"A company can only have up to {MAX_COMPANY_USERS} members."
+            )
         if self.instance and self.instance.role == 'owner' and attrs.get('role') != 'owner':
             raise serializers.ValidationError("Cannot change owner's role.")
         return attrs
@@ -176,6 +203,8 @@ class CompanyUserSerializer(serializers.ModelSerializer):
         )
         return super().create(validated_data)
 
+
+# ──────── CompanyInvitation Serializer ────────
 
 class CompanyInvitationSerializer(serializers.ModelSerializer):
     invited_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -196,34 +225,33 @@ class CompanyInvitationSerializer(serializers.ModelSerializer):
         if not cid:
             raise serializers.ValidationError({"company": "Company ID is required in URL."})
         company = get_object_or_404(Company, id=cid, deleted_at__isnull=True)
-        # Permission check
         if not IsCompanyAdminOrOwner().has_permission(request, view):
             raise serializers.ValidationError(
                 {"company": "No permission to invite to this company."}
             )
-        # Already a member
-        if CompanyUser.objects.filter(company=company, user__email=attrs['invited_email']).exists():
+        if CompanyUser.objects.filter(
+            company=company, user__email=attrs['invited_email']
+        ).exists():
             raise serializers.ValidationError(
                 {"invited_email": "User already in this company."}
             )
-        # Pending invitation
         if CompanyInvitation.objects.filter(
             company=company, invited_email=attrs['invited_email'], accepted=False
         ).exists():
             raise serializers.ValidationError(
                 {"invited_email": "An invitation is already pending."}
             )
-        # Cannot invite owner
         if attrs['role'] == 'owner':
             raise serializers.ValidationError({"role": "Cannot invite an owner."})
-        # Max members per company
         if company.company_users.count() >= MAX_COMPANY_USERS:
-            raise serializers.ValidationError(
-                {"company": f"A company can only have up to {MAX_COMPANY_USERS} members."}
-            )
+            raise serializers.ValidationError({
+                "company": f"A company can only have up to {MAX_COMPANY_USERS} members."
+            })
         attrs['company'] = company
         return attrs
 
+
+# ──────── CompanyDocument Serializer ────────
 
 class CompanyDocumentSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -240,7 +268,7 @@ class CompanyDocumentSerializer(serializers.ModelSerializer):
     def validate_document_file(self, file):
         if file.size > MAX_FILE_SIZE:
             raise serializers.ValidationError(
-                f"Max file size is {MAX_FILE_SIZE//(1024*1024)}MB"
+                f"Max file size is {MAX_FILE_SIZE // (1024*1024)}MB"
             )
         ext = os.path.splitext(file.name)[1].lower()
         if ext not in VALID_FILE_EXTENSIONS:
@@ -256,6 +284,8 @@ class CompanyDocumentSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+# ──────── Nested for “/users/me/” ────────
+
 class CompanyNestedSerializer(CompanySerializer):
     company_users = CompanyUserSerializer(many=True, read_only=True)
     documents = CompanyDocumentSerializer(many=True, read_only=True)
@@ -266,7 +296,7 @@ class CompanyNestedSerializer(CompanySerializer):
 
 class CustomUserDetailSerializer(serializers.ModelSerializer):
     """
-    Detailed user endpoint for GET /users/me/ includes nested companies with users and documents
+    Detailed user endpoint for GET /users/me/ includes nested companies
     """
     companies = serializers.SerializerMethodField()
 
@@ -283,5 +313,7 @@ class CustomUserDetailSerializer(serializers.ModelSerializer):
         qs = Company.objects.filter(
             Q(owner=obj) | Q(company_users__user=obj),
             deleted_at__isnull=True
-        ).distinct()
+        ).distinct() \
+         .select_related('owner') \
+         .prefetch_related('company_bids__tender')
         return CompanyNestedSerializer(qs, many=True, context=self.context).data

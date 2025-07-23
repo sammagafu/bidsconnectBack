@@ -1,10 +1,13 @@
+import uuid
 from django.db import models
-from accounts.models import CustomUser
-from django.utils.text import slugify
-from tenders.models import Category, SubCategory, Tender
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.exceptions import ValidationError
+
+from accounts.models import CustomUser, Company
+from tenders.models import Tender, TenderRequiredDocument
+
 
 class Bid(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     STATUS_CHOICES = (
         ('draft', 'Draft'),
         ('submitted', 'Submitted'),
@@ -14,85 +17,94 @@ class Bid(models.Model):
         ('awarded', 'Awarded'),
         ('withdrawn', 'Withdrawn'),
     )
-    
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='bids_bids')
-    bidder = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='bids_submitted_bids')
-    
-    # Pricing
-    total_price = models.DecimalField(max_digits=16, decimal_places=2)
-    currency = models.CharField(max_length=3, default='TSH')
+
+    tender = models.ForeignKey(
+        Tender,
+        on_delete=models.CASCADE,
+        related_name='bids'
+    )
+    bidder = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='submitted_bids'
+    )
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name='company_bids'
+    )
     validity_days = models.PositiveIntegerField(default=90)
-    
-    # Evaluation
-    technical_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    financial_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    combined_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    
-    # Status
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='draft'
+    )
     submission_date = models.DateTimeField(null=True, blank=True)
-    
+
     class Meta:
         unique_together = ('tender', 'bidder')
         ordering = ['-submission_date']
 
+    def __str__(self):
+        return f"Bid {self.id} by {self.bidder} ({self.company}) on {self.tender}"
+
+
 class BidDocument(models.Model):
-    DOCUMENT_TYPES = (
-        ('technical', 'Technical Proposal'),
-        ('financial', 'Financial Proposal'),
-        ('qualification', 'Qualification Documents'),
-        ('bid_bond', 'Bid Bond'),
-        ('Other', 'Other Documents'),
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bid = models.ForeignKey(
+        Bid,
+        on_delete=models.CASCADE,
+        related_name='documents'
     )
-    
-    bid = models.ForeignKey(Bid, on_delete=models.CASCADE, related_name='bids_documents')
-    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES)
+    required_document = models.ForeignKey(
+        TenderRequiredDocument,
+        on_delete=models.CASCADE,
+        related_name='bid_documents'
+    )
     file = models.FileField(upload_to='bid_documents/%Y/%m/')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
-class EvaluationCriterion(models.Model):
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='bids_evaluation_criteria')
-    name = models.CharField(max_length=200)
-    description = models.TextField()
-    weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    max_score = models.DecimalField(max_digits=5, decimal_places=2)
-
-class EvaluationResponse(models.Model):
-    criterion = models.ForeignKey(EvaluationCriterion, on_delete=models.CASCADE)
-    bid = models.ForeignKey(Bid, on_delete=models.CASCADE, related_name='bids_evaluations')
-    score = models.DecimalField(max_digits=5, decimal_places=2)
-    comments = models.TextField(blank=True)
-    evaluated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='bids_evaluation_responses')
-    evaluated_at = models.DateTimeField(auto_now_add=True)
-
-class Contract(models.Model):
-    tender = models.OneToOneField(Tender, on_delete=models.CASCADE, related_name='bids_contract')
-    bid = models.OneToOneField(Bid, on_delete=models.CASCADE, related_name='bids_awarded_contract')
-    start_date = models.DateField()
-    end_date = models.DateField()
-    value = models.DecimalField(max_digits=16, decimal_places=2)
-    signed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='bids_signed_contracts')
-    signed_at = models.DateTimeField(null=True, blank=True)
-    
     class Meta:
-        indexes = [
-            models.Index(fields=['start_date']),
-            models.Index(fields=['end_date']),
-        ]
+        unique_together = ('bid', 'required_document')
+
+    def clean(self):
+        # Ensure the uploaded document actually belongs to this tender
+        if self.required_document.tender_id != self.bid.tender_id:
+            raise ValidationError({
+                'required_document': 'This document type is not required for the selected tender.'
+            })
+
+    def __str__(self):
+        return f"{self.required_document.name} for Bid {self.bid.id}"
+
 
 class AuditLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     ACTION_CHOICES = (
         ('create', 'Create'),
         ('update', 'Update'),
         ('status_change', 'Status Change'),
         ('document_upload', 'Document Upload'),
     )
-    
-    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='bids_audit_logs')
-    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='bids_audit_logs')
+
+    tender = models.ForeignKey(
+        Tender,
+        on_delete=models.CASCADE,
+        related_name='audit_logs'
+    )
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='audit_logs'
+    )
     action = models.CharField(max_length=20, choices=ACTION_CHOICES)
     details = models.JSONField()
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"{self.get_action_display()} by {self.user} on {self.timestamp}"

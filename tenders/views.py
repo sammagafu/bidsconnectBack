@@ -1,5 +1,3 @@
-# views.py
-
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,13 +9,18 @@ from .models import (
     Category,
     SubCategory,
     ProcurementProcess,
+    AgencyDetails,
     Tender,
     TenderRequiredDocument,
+    TenderFinancialRequirement,
+    TenderTurnoverRequirement,
+    TenderExperienceRequirement,
+    TenderPersonnelRequirement,
+    TenderScheduleItem,
     TenderSubscription,
     NotificationPreference,
     TenderNotification,
     TenderStatusHistory,
-    AgencyDetails,
 )
 from .serializers import (
     CategorySerializer,
@@ -27,6 +30,11 @@ from .serializers import (
     AgencyDetailsSerializer,
     TenderSerializer,
     TenderRequiredDocumentSerializer,
+    TenderFinancialRequirementSerializer,
+    TenderTurnoverRequirementSerializer,
+    TenderExperienceRequirementSerializer,
+    TenderPersonnelRequirementSerializer,
+    TenderScheduleItemSerializer,
     TenderSubscriptionSerializer,
     NotificationPreferenceSerializer,
     TenderNotificationSerializer,
@@ -34,9 +42,7 @@ from .serializers import (
 )
 
 
-# ---------------------------
-# Category & SubCategory
-# ---------------------------
+# ─── Category & SubCategory ────────────────────────────────────────────────────
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -57,9 +63,7 @@ class CategoryWithSubcategoriesViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
 
-# ---------------------------
-# Procurement Process
-# ---------------------------
+# ─── Procurement Process ───────────────────────────────────────────────────────
 
 class ProcurementProcessViewSet(viewsets.ModelViewSet):
     queryset = ProcurementProcess.objects.all()
@@ -67,51 +71,40 @@ class ProcurementProcessViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
 
-# ---------------------------
-# Agency Details
-# ---------------------------
+# ─── Agency Details ──────────────────────────────────────────────────────────
 
 class AgencyDetailsViewSet(viewsets.ModelViewSet):
     queryset = AgencyDetails.objects.all()
     serializer_class = AgencyDetailsSerializer
-    permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'slug'
+    permission_classes = [permissions.IsAuthenticated]
 
 
-# ---------------------------
-# Tender & Nested Required Documents
-# ---------------------------
+# ─── Tender & Nested Endpoints ─────────────────────────────────────────────────
 
 class TenderViewSet(viewsets.ModelViewSet):
+    """
+    Full CRUD on Tender plus nested: required-documents, financial-requirements,
+    turnover-requirements, experience-requirements, personnel-requirements,
+    schedule-items, publish, status
+    """
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
-    permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'slug'
+    permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
         tender = serializer.save(created_by=self.request.user)
-        # Notify subscribers in same category
-        subs = TenderSubscription.objects.filter(category=tender.category).select_related('user')
-        recipients = [sub.user.email for sub in subs if sub.user.email]
+        # notify subscribers
+        recipients = [s.user.email for s in TenderSubscription.objects.filter(category=tender.category) if s.user.email]
         if recipients:
             send_mail(
                 subject=f'New Tender: {tender.title}',
-                message=f'A new tender "{tender.title}" has been posted in category "{tender.category.name}".',
+                message=f'A new tender "{tender.title}" was posted in category "{tender.category.name}".',
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=recipients,
                 fail_silently=True,
             )
-
-    def perform_update(self, serializer):
-        serializer.save()
-
-    @action(detail=False, methods=['get'], url_path='subscribed')
-    def subscribed(self, request):
-        cat_ids = TenderSubscription.objects.filter(user=request.user).values_list('category_id', flat=True)
-        qs = self.get_queryset().filter(category_id__in=cat_ids)
-        page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page, many=True)
-        return self.get_paginated_response(serializer.data)
 
     @action(detail=True, methods=['post'], url_path='publish')
     def publish(self, request, slug=None):
@@ -121,42 +114,99 @@ class TenderViewSet(viewsets.ModelViewSet):
         tender.status = 'published'
         tender.publication_date = timezone.now()
         tender.save()
-        return Response({'detail': 'Tender published successfully.'}, status=status.HTTP_200_OK)
+        tender.send_notification_emails()
+        return Response({'detail': 'Tender published and notifications sent.'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['patch'], url_path='status')
+    def change_status(self, request, slug=None):
+        tender = self.get_object()
+        new_status = request.data.get('status')
+        valid = [choice[0] for choice in Tender.STATUS_CHOICES]
+        if new_status not in valid:
+            return Response({'detail': f'Invalid status "{new_status}".'}, status=status.HTTP_400_BAD_REQUEST)
+        tender.status = new_status
+        if new_status == 'published' and not tender.publication_date:
+            tender.publication_date = timezone.now()
+        tender.save()
+        return Response({'detail': 'Status updated.', 'status': tender.status}, status=status.HTTP_200_OK)
+
+    def _nested_list_create(self, request, slug, model, serializer_class, related_name):
+        tender = self.get_object()
+        if request.method == 'GET':
+            qs = getattr(tender, related_name).all()
+            page = self.paginate_queryset(qs)
+            ser = serializer_class(page or qs, many=True)
+            return self.get_paginated_response(ser.data) if page is not None else Response(ser.data)
+        ser = serializer_class(data=request.data)
+        if ser.is_valid():
+            ser.save(tender=tender)
+            return Response(ser.data, status=status.HTTP_201_CREATED)
+        return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['get', 'post'], url_path='required-documents')
     def required_documents(self, request, slug=None):
-        """
-        GET  /tenders/{slug}/required-documents/      → list docs for that tender
-        POST /tenders/{slug}/required-documents/      → create a new doc for that tender
-        """
-        tender = self.get_object()
+        return self._nested_list_create(request, slug, TenderRequiredDocument, TenderRequiredDocumentSerializer, 'required_documents')
 
-        if request.method == 'GET':
-            docs = TenderRequiredDocument.objects.filter(tender=tender)
-            page = self.paginate_queryset(docs)
-            serializer = TenderRequiredDocumentSerializer(page or docs, many=True)
-            if page is not None:
-                return self.get_paginated_response(serializer.data)
-            return Response(serializer.data)
+    @action(detail=True, methods=['get', 'post'], url_path='financial-requirements')
+    def financial_requirements(self, request, slug=None):
+        return self._nested_list_create(request, slug, TenderFinancialRequirement, TenderFinancialRequirementSerializer, 'financial_requirements')
 
-        # POST to create
-        serializer = TenderRequiredDocumentSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(tender=tender)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    @action(detail=True, methods=['get', 'post'], url_path='turnover-requirements')
+    def turnover_requirements(self, request, slug=None):
+        return self._nested_list_create(request, slug, TenderTurnoverRequirement, TenderTurnoverRequirementSerializer, 'turnover_requirements')
+
+    @action(detail=True, methods=['get', 'post'], url_path='experience-requirements')
+    def experience_requirements(self, request, slug=None):
+        return self._nested_list_create(request, slug, TenderExperienceRequirement, TenderExperienceRequirementSerializer, 'experience_requirements')
+
+    @action(detail=True, methods=['get', 'post'], url_path='personnel-requirements')
+    def personnel_requirements(self, request, slug=None):
+        return self._nested_list_create(request, slug, TenderPersonnelRequirement, TenderPersonnelRequirementSerializer, 'personnel_requirements')
+
+    @action(detail=True, methods=['get', 'post'], url_path='schedule-items')
+    def schedule_items(self, request, slug=None):
+        return self._nested_list_create(request, slug, TenderScheduleItem, TenderScheduleItemSerializer, 'schedule_items')
 
 
-# full CRUD if you ever need direct access
+# ─── Generic CRUD ViewSets for Child Models ────────────────────────────────────
+
 class TenderRequiredDocumentViewSet(viewsets.ModelViewSet):
     queryset = TenderRequiredDocument.objects.all()
     serializer_class = TenderRequiredDocumentSerializer
     permission_classes = [permissions.IsAuthenticated]
 
 
-# ---------------------------
-# Tender Subscription
-# ---------------------------
+class TenderFinancialRequirementViewSet(viewsets.ModelViewSet):
+    queryset = TenderFinancialRequirement.objects.all()
+    serializer_class = TenderFinancialRequirementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class TenderTurnoverRequirementViewSet(viewsets.ModelViewSet):
+    queryset = TenderTurnoverRequirement.objects.all()
+    serializer_class = TenderTurnoverRequirementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class TenderExperienceRequirementViewSet(viewsets.ModelViewSet):
+    queryset = TenderExperienceRequirement.objects.all()
+    serializer_class = TenderExperienceRequirementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class TenderPersonnelRequirementViewSet(viewsets.ModelViewSet):
+    queryset = TenderPersonnelRequirement.objects.all()
+    serializer_class = TenderPersonnelRequirementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class TenderScheduleItemViewSet(viewsets.ModelViewSet):
+    queryset = TenderScheduleItem.objects.all()
+    serializer_class = TenderScheduleItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+# ─── Subscription, Notifications & History ────────────────────────────────────
 
 class TenderSubscriptionViewSet(viewsets.ModelViewSet):
     queryset = TenderSubscription.objects.all()
@@ -168,10 +218,10 @@ class TenderSubscriptionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='subscribe')
     def subscribe(self, request):
-        cat_id = request.data.get('category')
+        cat = request.data.get('category')
         sub, created = TenderSubscription.objects.get_or_create(
             user=request.user,
-            category_id=cat_id,
+            category_id=cat,
             defaults={
                 'subcategory_id': request.data.get('subcategory'),
                 'procurement_process_id': request.data.get('procurement_process'),
@@ -183,16 +233,13 @@ class TenderSubscriptionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='unsubscribe')
     def unsubscribe(self, request):
-        cat_id = request.data.get('category')
-        deleted, _ = TenderSubscription.objects.filter(user=request.user, category_id=cat_id).delete()
+        deleted, _ = TenderSubscription.objects.filter(
+            user=request.user, category_id=request.data.get('category')
+        ).delete()
         if deleted:
-            return Response({'detail': 'Unsubscribed'}, status=status.HTTP_204_NO_CONTENT)
+            return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'detail': 'Not subscribed'}, status=status.HTTP_400_BAD_REQUEST)
 
-
-# ---------------------------
-# Notification Preferences
-# ---------------------------
 
 class NotificationPreferenceViewSet(viewsets.ModelViewSet):
     queryset = NotificationPreference.objects.all()
@@ -205,10 +252,6 @@ class NotificationPreferenceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return self.queryset.filter(user=self.request.user)
 
-
-# ---------------------------
-# Tender Notifications & History
-# ---------------------------
 
 class TenderNotificationViewSet(viewsets.ModelViewSet):
     queryset = TenderNotification.objects.all()
