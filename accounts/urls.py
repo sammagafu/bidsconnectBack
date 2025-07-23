@@ -1,41 +1,111 @@
-# accounts/urls.py
-
 from django.urls import path
+from rest_framework.routers import DefaultRouter
+
 from .views import (
-    UserRegistrationView,
-    CompanyListView, CompanyDetailView,
-    CompanyUserManagementView, CompanyUserDetailView,
-    InvitationListView, InvitationDetailView, InvitationAcceptanceView,
-    DocumentManagementView, DocumentDetailView,
-    UserProfileView,
-    OwnerCompanyListView, AdminCompanyListView,
-    PublicInvitationAcceptanceView,  # ← imported here
+    UserProfileViewSet,
+    CompanyViewSet,
+    CompanyUserViewSet,
+    CompanyInvitationViewSet,
+    CompanyDocumentViewSet,
+    CompanyOfficeViewSet,
+    CompanyCertificationViewSet,
+    CompanySourceOfFundViewSet,
+    CompanyAnnualTurnoverViewSet,
+    CompanyFinancialStatementViewSet,
+    CompanyLitigationViewSet,
+    CompanyEquipmentViewSet,
+    CompanyPersonnelViewSet,
+    AuditLogViewSet,
+    InvitationAcceptanceView,
+    CompanyDocumentCSVExportView,
+    DocumentExpiryWebhookView,
+    CompanyDashboardView,
 )
 
-urlpatterns = [
-    path('auth/register/', UserRegistrationView.as_view(), name='user-register'),
+app_name = 'accounts'
 
-    path('companies/', CompanyListView.as_view(), name='company-list'),
-    path('companies/owner/', OwnerCompanyListView.as_view(), name='owner-company-list'),
-    path('companies/admin/', AdminCompanyListView.as_view(), name='admin-company-list'),
-    path('companies/<uuid:id>/', CompanyDetailView.as_view(), name='company-detail'),
+router = DefaultRouter()
+router.register(r'users', UserProfileViewSet, basename='user')
+router.register(r'companies', CompanyViewSet, basename='company')
+router.register(r'audit-logs', AuditLogViewSet, basename='audit-log')
 
-    path('companies/<uuid:company_id>/users/', CompanyUserManagementView.as_view(), name='company-users'),
-    path('companies/<uuid:company_id>/users/<int:id>/', CompanyUserDetailView.as_view(), name='company-user-detail'),
+# Nested-style endpoints using regex prefixes without extra dependency
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/users',
+    CompanyUserViewSet,
+    basename='company-users'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/invitations',
+    CompanyInvitationViewSet,
+    basename='company-invitations'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/documents',
+    CompanyDocumentViewSet,
+    basename='company-documents'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/offices',
+    CompanyOfficeViewSet,
+    basename='company-offices'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/certifications',
+    CompanyCertificationViewSet,
+    basename='company-certifications'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/sources-of-fund',
+    CompanySourceOfFundViewSet,
+    basename='company-sources-of-fund'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/annual-turnovers',
+    CompanyAnnualTurnoverViewSet,
+    basename='company-annual-turnovers'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/financial-statements',
+    CompanyFinancialStatementViewSet,
+    basename='company-financial-statements'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/litigations',
+    CompanyLitigationViewSet,
+    basename='company-litigations'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/equipment',
+    CompanyEquipmentViewSet,
+    basename='company-equipment'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/personnel',
+    CompanyPersonnelViewSet,
+    basename='company-personnel'
+)
 
-    path('companies/<uuid:company_id>/invitations/', InvitationListView.as_view(), name='invitation-list'),
-    path('companies/<uuid:company_id>/invitations/<int:id>/', InvitationDetailView.as_view(), name='invitation-detail'),
-    path('companies/<uuid:company_id>/accept-invitation/<str:token>/', InvitationAcceptanceView.as_view(), name='accept-invitation'),
-
-    path('companies/<uuid:company_id>/documents/', DocumentManagementView.as_view(), name='document-list'),
-    path('companies/<uuid:company_id>/documents/<int:id>/', DocumentDetailView.as_view(), name='document-detail'),
-
-    path('profile/', UserProfileView.as_view(), name='user-profile'),
-
-    # Public, token-only invitation accept (no company_id)
+urlpatterns = router.urls + [
+    # One-off endpoints
     path(
-        'accept-invitation/<str:token>/',
-        PublicInvitationAcceptanceView.as_view(),
-        name='public-accept-invitation'
+        'companies/<uuid:company_pk>/dashboard/',
+        CompanyDashboardView.as_view(),
+        name='company-dashboard'
+    ),
+    path(
+        'companies/<uuid:company_pk>/documents/export/',
+        CompanyDocumentCSVExportView.as_view(),
+        name='company-documents-export'
+    ),
+    path(
+        'invitations/accept/<str:token>/',
+        InvitationAcceptanceView.as_view(),
+        name='invitation-accept'
+    ),
+    path(
+        'webhooks/documents/expiry/',
+        DocumentExpiryWebhookView.as_view(),
+        name='document-expiry-webhook'
     ),
 ]
