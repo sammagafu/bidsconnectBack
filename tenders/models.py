@@ -32,7 +32,6 @@ class Category(models.Model):
                 counter += 1
         super().save(*args, **kwargs)
 
-
 class SubCategory(models.Model):
     name = models.CharField(max_length=100)
     slug = models.SlugField(max_length=100, blank=True)
@@ -57,7 +56,6 @@ class SubCategory(models.Model):
                 self.slug = f"{base_slug}-{counter}"
                 counter += 1
         super().save(*args, **kwargs)
-
 
 class AgencyDetails(models.Model):
     name = models.CharField(max_length=255, unique=True)
@@ -130,7 +128,14 @@ class Tender(models.Model):
         ("closed", "Closed"),
         ("canceled", "Canceled"),
     )
-
+    CurrencyTYpes = (
+        ('TZS', 'Tanzanian Shilling'),
+        ('USD', 'US Dollar'),
+        ('EUR', 'Euro'),
+        ('GBP', 'British Pound'),
+        ('JPY', 'Japanese Yen'),
+        ('CNY', 'Chinese Yuan'),
+    )  
     TenderTypeCountry = (
         ('National', 'National Tendering'),
         ('International', 'International Tendering'),
@@ -167,7 +172,7 @@ class Tender(models.Model):
     completion_period_days = models.PositiveIntegerField(null=True, blank=True)
     litigation_history_start = models.DateField(null=True, blank=True)
     litigation_history_end = models.DateField(null=True, blank=True)
-
+    tender_document= models.FileField(upload_to='tender_documents/%Y/%m/', blank=True, null=True)
     tender_fees = models.DecimalField(max_digits=16, decimal_places=2)
     tender_securing_type = models.CharField(max_length=30, default='Tender Security', choices=TenderSecurityType)
     tender_security_percentage = models.DecimalField(
@@ -179,7 +184,7 @@ class Tender(models.Model):
         max_digits=16, decimal_places=2,
         validators=[MinValueValidator(0)], blank=True, null=True
     )
-
+    tender_security_currency = models.CharField(max_length=10, default='TZS',choices=CurrencyTYpes)
     created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_tenders')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     last_status_change = models.DateTimeField(auto_now=True)
