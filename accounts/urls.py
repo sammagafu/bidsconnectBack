@@ -13,7 +13,6 @@ from .views import (
     CompanyAnnualTurnoverViewSet,
     CompanyFinancialStatementViewSet,
     CompanyLitigationViewSet,
-    CompanyEquipmentViewSet,
     CompanyPersonnelViewSet,
     AuditLogViewSet,
     InvitationAcceptanceView,
@@ -75,11 +74,7 @@ router.register(
     CompanyLitigationViewSet,
     basename='company-litigations'
 )
-router.register(
-    r'companies/(?P<company_pk>[^/.]+)/equipment',
-    CompanyEquipmentViewSet,
-    basename='company-equipment'
-)
+
 router.register(
     r'companies/(?P<company_pk>[^/.]+)/personnel',
     CompanyPersonnelViewSet,

@@ -1,3 +1,5 @@
+# accounts/serializers.py
+
 import os
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
@@ -12,10 +14,9 @@ from .models import (
     CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument,
     CompanyOffice, CompanyCertification, CompanySourceOfFund,
     CompanyAnnualTurnover, CompanyFinancialStatement,
-    CompanyLitigation, CompanyEquipment, CompanyPersonnel, AuditLog
+    CompanyLitigation, CompanyPersonnel, AuditLog
 )
 from .constants import VALID_FILE_EXTENSIONS, MAX_FILE_SIZE, MAX_COMPANIES_PER_USER, MAX_COMPANY_USERS
-from .permissions import IsCompanyAdminOrOwner
 
 
 # ───── User & Profile ──────────────────────────────────────────────────────────
@@ -93,70 +94,8 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 
 # ───── Core Company CRUD Serializers ───────────────────────────────────────────
 
-class CompanySerializer(serializers.ModelSerializer):
-    owner = serializers.HiddenField(default=serializers.CurrentUserDefault())
-    slug = serializers.SlugField(read_only=True)
-    owner_email = serializers.SerializerMethodField()
-    created_by = serializers.PrimaryKeyRelatedField(
-        queryset=CustomUser.objects.all(),
-        default=serializers.CurrentUserDefault(),
-        write_only=True
-    )
-
-    class Meta:
-        model = Company
-        depth=1
-        fields = (
-            'id', 'name', 'slug', 'description', 'industry', 'website', 'logo',
-            'tax_id', 'registration_number', 'founded_date', 'country',
-            'key_activities', 'naics_code', 'status', 'is_verified',
-            'verification_date', 'employee_count', 'parent_company',
-            'owner', 'owner_email', 'deleted_at', 'created_at', 'updated_at',
-            'created_by'
-        )
-        read_only_fields = ('deleted_at', 'created_at', 'updated_at')
-
-    def get_owner_email(self, obj):
-        return obj.owner.email
-
-    def validate(self, attrs):
-        user = self.context['request'].user
-        if self.instance is None and Company.objects.filter(
-            owner=user, deleted_at__isnull=True
-        ).exists():
-            raise serializers.ValidationError({
-                'owner': f"A user can only own {MAX_COMPANIES_PER_USER} company."
-            })
-        return attrs
-
-    def validate_name(self, value):
-        if Company.objects.filter(
-            name__iexact=value, deleted_at__isnull=True
-        ).exists():
-            raise serializers.ValidationError("Company name already exists.")
-        return value
-
-
-# ───── Tender Bid Nesting ─────────────────────────────────────────────────────
-
-class TenderSummarySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Tender
-        fields = ['id', 'title', 'submission_deadline']
-
-
-class CompanyBidSerializer(BidSerializer):
-    tender = TenderSummarySerializer(read_only=True)
-
-    class Meta(BidSerializer.Meta):
-        fields = BidSerializer.Meta.fields + ['tender']
-
-
-# ───── Flat “Member” Serializers ──────────────────────────────────────────────
-
 class CompanyUserSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
-
     class Meta:
         model = CompanyUser
         fields = ['id', 'user', 'user_email', 'role']
@@ -165,31 +104,38 @@ class CompanyUserSerializer(serializers.ModelSerializer):
 
 class CompanyInvitationSerializer(serializers.ModelSerializer):
     invited_by = serializers.StringRelatedField(read_only=True)
-
     class Meta:
         model = CompanyInvitation
-        fields = ['id', 'invited_email', 'role', 'accepted', 'created_at', 'expires_at']
-        read_only_fields = ['id', 'accepted', 'created_at']
+        fields = ['id', 'invited_email', 'role', 'accepted', 'created_at', 'expires_at', 'invited_by']
+        read_only_fields = ['id', 'accepted', 'created_at', 'invited_by']
 
 
 class CompanyDocumentSerializer(serializers.ModelSerializer):
+    # We'll still use HiddenField to stamp the current user, 
+    # but also include it in fields so DRF doesn’t complain
     uploaded_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
 
     class Meta:
         model = CompanyDocument
-        fields = ['id', 'document_type', 'document_category', 'document_file', 'uploaded_at', 'expires_at', 'status']
-        read_only_fields = ['id', 'uploaded_at', 'status']
+        fields = [
+            'id',
+            'uploaded_by',
+            'document_type',
+            'document_category',
+            'document_file',
+            'uploaded_at',
+            'expires_at',
+            'status',
+        ]
+        read_only_fields = ['id', 'uploaded_at', 'status', 'uploaded_by']
 
     def validate_document_file(self, file):
-        if file.size > MAX_FILE_SIZE:
-            raise serializers.ValidationError(f"Max file size is {MAX_FILE_SIZE//(1024*1024)}MB")
         ext = os.path.splitext(file.name)[1].lower()
         if ext not in VALID_FILE_EXTENSIONS:
-            raise serializers.ValidationError("Unsupported format.")
+            raise serializers.ValidationError("Unsupported file extension.")
+        if file.size > MAX_FILE_SIZE:
+            raise serializers.ValidationError(f"Max file size is {MAX_FILE_SIZE//(1024*1024)}MB")
         return file
-
-
-# ───── Flat Office/Cert/etc ─────────────────────────────────────────────────
 
 class CompanyOfficeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -235,23 +181,39 @@ class CompanyLitigationSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
-class CompanyEquipmentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = CompanyEquipment
-        fields = ['id', 'name', 'quantity', 'description']
-        read_only_fields = ['id']
-
-
 class CompanyPersonnelSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyPersonnel
-        fields = ['id', 'name', 'role', 'education', 'years_experience', 'professional_registration']
-        read_only_fields = ['id']
+        fields = [
+            'id', 'uuid',
+            'first_name', 'middle_name', 'last_name',
+            'gender', 'date_of_birth', 'phone_number', 'email', 'physical_address',
+            'employee_type', 'job_title', 'date_of_employment', 'language_spoken',
+            'education', 'years_experience', 'professional_registration',
+            'is_verified', 'verified_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'uuid', 'verified_at', 'created_at', 'updated_at']
 
 
-# ───── Deep‐Nesting for “/users/me” or Detail ─────────────────────────────────
+class TenderSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tender
+        fields = ['id', 'title', 'submission_deadline']
 
-class CompanyNestedSerializer(CompanySerializer):
+
+class CompanyBidSerializer(BidSerializer):
+    tender = TenderSummarySerializer(read_only=True)
+    class Meta(BidSerializer.Meta):
+        fields = BidSerializer.Meta.fields + ['tender']
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    owner = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    slug = serializers.SlugField(read_only=True)
+    owner_email = serializers.SerializerMethodField()
+
+    # nested related data, all read-only:
     company_users        = CompanyUserSerializer(many=True,   read_only=True)
     invitations          = CompanyInvitationSerializer(many=True, read_only=True)
     documents            = CompanyDocumentSerializer(many=True,  read_only=True)
@@ -261,17 +223,52 @@ class CompanyNestedSerializer(CompanySerializer):
     annual_turnovers     = CompanyAnnualTurnoverSerializer(many=True, read_only=True)
     financial_statements = CompanyFinancialStatementSerializer(many=True, read_only=True)
     litigations          = CompanyLitigationSerializer(many=True,   read_only=True)
-    equipment            = CompanyEquipmentSerializer(many=True,    read_only=True)
     personnel            = CompanyPersonnelSerializer(many=True,   read_only=True)
     bids                 = CompanyBidSerializer(many=True,          read_only=True, source='company_bids')
 
-    class Meta(CompanySerializer.Meta):
-        fields = CompanySerializer.Meta.fields + (
+    class Meta:
+        model = Company
+        depth = 1
+        fields = (
+            'id','name','slug','description','industry','website','logo',
+            'tax_id','registration_number','founded_date','country',
+            'key_activities','naics_code','status','is_verified',
+            'verification_date','employee_count','parent_company',
+            'owner','owner_email','deleted_at','created_at','updated_at','created_by',
+
+            # include all nested relations:
             'company_users','invitations','documents','offices',
             'certifications','sources_of_funds','annual_turnovers',
-            'financial_statements','litigations','equipment',
-            'personnel','bids'
+            'financial_statements','litigations',
+            'personnel','bids',
         )
+        read_only_fields = (
+            'deleted_at','created_at','updated_at',
+            'company_users','invitations','documents','offices',
+            'certifications','sources_of_funds','annual_turnovers',
+            'financial_statements','litigations',
+            'personnel','bids',
+        )
+
+    def get_owner_email(self, obj):
+        return obj.owner.email
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        if self.instance is None and Company.objects.filter(
+            owner=user, deleted_at__isnull=True
+        ).count() >= MAX_COMPANIES_PER_USER:
+            raise serializers.ValidationError({
+                'owner': f"A user can only own {MAX_COMPANIES_PER_USER} company."
+            })
+        return attrs
+
+    def validate_name(self, value):
+        if Company.objects.filter(
+            name__iexact=value, deleted_at__isnull=True
+        ).exists():
+            raise serializers.ValidationError("Company name already exists.")
+        return value
 
 
 class CustomUserDetailSerializer(serializers.ModelSerializer):
@@ -290,7 +287,7 @@ class CustomUserDetailSerializer(serializers.ModelSerializer):
             Q(owner=obj) | Q(company_users__user=obj),
             deleted_at__isnull=True
         ).distinct().select_related('owner')
-        return CompanyNestedSerializer(qs, many=True, context=self.context).data
+        return CompanySerializer(qs, many=True, context=self.context).data
 
 
 class AuditLogSerializer(serializers.ModelSerializer):

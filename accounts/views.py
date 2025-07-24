@@ -28,7 +28,6 @@ from .models import (
     CompanyAnnualTurnover,
     CompanyFinancialStatement,
     CompanyLitigation,
-    CompanyEquipment,
     CompanyPersonnel,
     AuditLog,
 )
@@ -46,7 +45,6 @@ from .serializers import (
     CompanyAnnualTurnoverSerializer,
     CompanyFinancialStatementSerializer,
     CompanyLitigationSerializer,
-    CompanyEquipmentSerializer,
     CompanyPersonnelSerializer,
 )
 from .permissions import IsCompanyOwner, IsCompanyAdminOrOwner
@@ -230,7 +228,10 @@ class CompanyDocumentViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        file = serializer.validated_data.get('file')
+        """
+        On create: validate and set company + uploaded_by
+        """
+        file = serializer.validated_data['document_file']
         ext = os.path.splitext(file.name)[1].lower()
         if ext not in VALID_FILE_EXTENSIONS:
             raise ValidationError("Unsupported file extension.")
@@ -249,6 +250,46 @@ class CompanyDocumentViewSet(viewsets.ModelViewSet):
                 details={'company_id': str(doc.company.id), 'document_id': str(doc.id)}
             )
 
+    def perform_update(self, serializer):
+        """
+        On update: if a new file is provided, remove the old one first.
+        """
+        instance = self.get_object()
+        new_file = serializer.validated_data.get('document_file')
+
+        if new_file:
+            # delete the previous file from storage
+            old_path = instance.document_file.path
+            if os.path.isfile(old_path):
+                os.remove(old_path)
+
+            # also delete old audit report if you want:
+            # ar_path = instance.audit_report.path
+            # if instance.audit_report and os.path.isfile(ar_path):
+            #     os.remove(ar_path)
+
+        with transaction.atomic():
+            doc = serializer.save()
+            AuditLog.objects.create(
+                action='document_updated',
+                user=self.request.user,
+                details={'company_id': str(doc.company.id), 'document_id': str(doc.id)}
+            )
+
+    def perform_destroy(self, instance):
+        """
+        On delete: remove the file from storage too.
+        """
+        file_path = instance.document_file.path
+        with transaction.atomic():
+            instance.delete()
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            AuditLog.objects.create(
+                action='document_deleted',
+                user=self.request.user,
+                details={'company_id': str(self.kwargs['company_pk']), 'document_id': str(instance.id)}
+            )
 
 class CompanyOfficeViewSet(viewsets.ModelViewSet):
     """
@@ -421,29 +462,11 @@ class CompanyLitigationViewSet(viewsets.ModelViewSet):
         )
 
 
-class CompanyEquipmentViewSet(viewsets.ModelViewSet):
-    serializer_class = CompanyEquipmentSerializer
-    permission_classes = [permissions.IsAuthenticated, IsCompanyAdminOrOwner]
-    throttle_classes = [UserRateThrottle]
-
-    def get_queryset(self):
-        return CompanyEquipment.objects.filter(
-            company_id=self.kwargs['company_pk'],
-            company__deleted_at__isnull=True
-        )
-
-    def perform_create(self, serializer):
-        eq = serializer.save(
-            company=get_object_or_404(Company, id=self.kwargs['company_pk'], deleted_at__isnull=True)
-        )
-        AuditLog.objects.create(
-            action='equipment_added',
-            user=self.request.user,
-            details={'company_id': str(eq.company.id), 'equipment_id': eq.id}
-        )
-
-
 class CompanyPersonnelViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for CompanyPersonnel; only company admins/owners.
+    Emits audit logs on create, update, verify, and delete.
+    """
     serializer_class = CompanyPersonnelSerializer
     permission_classes = [permissions.IsAuthenticated, IsCompanyAdminOrOwner]
     throttle_classes = [UserRateThrottle]
@@ -454,14 +477,60 @@ class CompanyPersonnelViewSet(viewsets.ModelViewSet):
             company__deleted_at__isnull=True
         )
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        pers = serializer.save(
-            company=get_object_or_404(Company, id=self.kwargs['company_pk'], deleted_at__isnull=True)
+        company = get_object_or_404(
+            Company, id=self.kwargs['company_pk'], deleted_at__isnull=True
         )
+        pers = serializer.save(company=company)
         AuditLog.objects.create(
             action='personnel_added',
             user=self.request.user,
-            details={'company_id': str(pers.company.id), 'personnel_id': pers.id}
+            details={
+                'company_id': str(company.id),
+                'personnel_uuid': str(pers.uuid),
+                'name': f"{pers.first_name} {pers.last_name}"
+            }
+        )
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        # detect verification flip
+        instance = self.get_object()
+        was_verified = instance.is_verified
+        pers = serializer.save()
+        AuditLog.objects.create(
+            action='personnel_updated',
+            user=self.request.user,
+            details={
+                'company_id': str(pers.company.id),
+                'personnel_uuid': str(pers.uuid),
+            }
+        )
+        # if they just became verified, log that too
+        if not was_verified and pers.is_verified:
+            AuditLog.objects.create(
+                action='personnel_verified',
+                user=self.request.user,
+                details={
+                    'company_id': str(pers.company.id),
+                    'personnel_uuid': str(pers.uuid),
+                }
+            )
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        # capture details before delete
+        details = {
+            'company_id': str(instance.company.id),
+            'personnel_uuid': str(instance.uuid),
+            'name': f"{instance.first_name} {instance.last_name}"
+        }
+        instance.delete()
+        AuditLog.objects.create(
+            action='personnel_removed',
+            user=self.request.user,
+            details=details
         )
 
 

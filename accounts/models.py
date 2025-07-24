@@ -16,7 +16,7 @@ from django.contrib.auth.models import (
     Permission
 )
 from django.db.models import Avg
-
+from django.core.validators import MinValueValidator, MaxValueValidator
 from .constants import (
     ROLE_CHOICES,
     DOCUMENT_TYPE_CHOICES,
@@ -293,7 +293,6 @@ class CompanyDocument(models.Model):
         self.full_clean()
         super().save(*args,**kwargs)
 
-
 class CompanyLitigation(models.Model):
     company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='litigations')
     title=models.CharField(max_length=255)
@@ -304,26 +303,70 @@ class CompanyLitigation(models.Model):
     def __str__(self):
         return f"{self.company.name} - {self.title} ({self.status})"
 
-
-class CompanyEquipment(models.Model):
-    company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='equipment')
-    name=models.CharField(max_length=200)
-    quantity=models.PositiveIntegerField()
-    description=models.TextField(blank=True)
-    def __str__(self):
-        return f"{self.company.name} - {self.name} x{self.quantity}"
-
-
 class CompanyPersonnel(models.Model):
-    company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='personnel')
-    name=models.CharField(max_length=150)
-    role=models.CharField(max_length=100)
-    education=models.CharField(max_length=200,blank=True)
-    years_experience=models.PositiveIntegerField()
-    professional_registration=models.BooleanField(default=False)
-    def __str__(self):
-        return f"{self.company.name} - {self.name} ({self.role})"
+    EMPLOYEE_TYPE_CHOICES = [
+        ('employee', 'Employee'),
+        ('expert',   'Expert'),
+    ]
 
+    GENDER_CHOICES = [
+        ('male',   'Male'),
+        ('female', 'Female'),
+        ('other',  'Other'),
+    ]
+
+    company          = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name='personnel'
+    )
+    uuid             = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    # Name components
+    first_name       = models.CharField(max_length=50, default='')
+    middle_name      = models.CharField(max_length=50, blank=True, default='')
+    last_name        = models.CharField(max_length=50, default='')
+
+    # Personal info
+    gender           = models.CharField(max_length=10, choices=GENDER_CHOICES, default='other')
+    date_of_birth    = models.DateField(default=timezone.now)
+    phone_number     = models.CharField(max_length=20, default='')
+    email            = models.EmailField(default='')
+    physical_address = models.TextField(default='')
+
+    # Employment details
+    employee_type      = models.CharField(max_length=10, choices=EMPLOYEE_TYPE_CHOICES, default='employee')
+    job_title          = models.CharField(max_length=100, default='')
+    date_of_employment = models.DateField(default=timezone.now)
+    language_spoken    = models.CharField(max_length=200, default='', help_text='Comma-separated list of languages')
+
+    # Verification
+    is_verified        = models.BooleanField(default=False)
+    verified_at        = models.DateTimeField(null=True, blank=True, default=None)
+
+    # Legacy / optional
+    education          = models.CharField(max_length=200, blank=True, default='')
+    years_experience   = models.PositiveIntegerField(
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        default=0
+    )
+    professional_registration = models.BooleanField(default=False)
+
+    # Timestamps with defaults so migrations won’t prompt
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['last_name', 'first_name']
+        unique_together = [('company', 'uuid')]
+
+    def __str__(self):
+        return f"{self.company.name} – {self.first_name} {self.last_name} ({self.job_title})"
+
+    def verify(self):
+        """Mark this personnel as verified now."""
+        if not self.is_verified:
+            self.is_verified = True
+            self.verified_at = timezone.now()
+            self.save(update_fields=['is_verified', 'verified_at'])
 
 class CompanyAnnualTurnover(models.Model):
     company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='annual_turnovers')
@@ -394,8 +437,6 @@ class CompanySourceOfFund(models.Model):
 
     def __str__(self):
         return f"{self.company.name} – {self.get_source_type_display()}: {self.amount} {self.currency}"
-
-
 
 class AuditLog(models.Model):
     action=models.CharField(max_length=50)
