@@ -14,6 +14,7 @@ from .models import (
     TenderPersonnelRequirement, TenderScheduleItem,
     TenderSubscription, NotificationPreference,
     TenderNotification, TenderStatusHistory,
+    TenderTechnicalSpecification,  # NEW: Import new model
 )
 from .serializers import (
     CategorySerializer, SubCategorySerializer, CategoryWithSubcategoriesSerializer,
@@ -23,6 +24,7 @@ from .serializers import (
     TenderPersonnelRequirementSerializer, TenderScheduleItemSerializer,
     TenderSubscriptionSerializer, NotificationPreferenceSerializer,
     TenderNotificationSerializer, TenderStatusHistorySerializer,
+    TenderTechnicalSpecificationSerializer,  # NEW: Import new serializer
 )
 
 
@@ -75,6 +77,7 @@ class TenderViewSet(viewsets.ModelViewSet):
       - GET/POST    /tenders/{slug}/experience-requirements/
       - GET/POST    /tenders/{slug}/personnel-requirements/
       - GET/POST    /tenders/{slug}/schedule-items/
+      - GET/POST    /tenders/{slug}/technical-specifications/  # NEW
       - POST        /tenders/{slug}/publish/
       - PATCH       /tenders/{slug}/status/
     """
@@ -197,6 +200,14 @@ class TenderViewSet(viewsets.ModelViewSet):
             'schedule_items'
         )
 
+    @action(detail=True, methods=['get', 'post'], url_path='technical-specifications')  # NEW: Nested endpoint
+    def technical_specifications(self, request, slug=None):
+        return self._nested_list_create(
+            request,
+            TenderTechnicalSpecificationSerializer,
+            'technical_specifications'
+        )
+
 
 # ─── Flat CRUD on each child type ────────────────────────────────────────────────
 
@@ -233,6 +244,12 @@ class TenderPersonnelRequirementViewSet(viewsets.ModelViewSet):
 class TenderScheduleItemViewSet(viewsets.ModelViewSet):
     queryset = TenderScheduleItem.objects.all()
     serializer_class = TenderScheduleItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+# NEW: Flat CRUD for new model if needed
+class TenderTechnicalSpecificationViewSet(viewsets.ModelViewSet):
+    queryset = TenderTechnicalSpecification.objects.all()
+    serializer_class = TenderTechnicalSpecificationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
 

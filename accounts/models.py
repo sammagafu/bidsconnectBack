@@ -379,7 +379,6 @@ class CompanyAnnualTurnover(models.Model):
     def __str__(self):
         return f"{self.company.name} - {self.year}: {self.amount} {self.currency}"
 
-
 class CompanyFinancialStatement(models.Model):
     company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='financial_statements')
     year=models.PositiveIntegerField()
@@ -393,11 +392,67 @@ class CompanyFinancialStatement(models.Model):
     file=models.FileField(upload_to='company_financials/%Y/')
     audit_report=models.FileField(upload_to='company_audit_reports/%Y/',blank=True,null=True)
     uploaded_at=models.DateTimeField(auto_now_add=True)
+
+    # New fields for ratio calculations
+    current_assets = models.DecimalField(
+        max_digits=20, decimal_places=2, validators=[MinValueValidator(0)], default=0.00
+    )
+    current_liabilities = models.DecimalField(
+        max_digits=20, decimal_places=2, validators=[MinValueValidator(0)], default=0.00
+    )
+    cash_and_bank = models.DecimalField(
+        max_digits=20, decimal_places=2, validators=[MinValueValidator(0)], default=0.00
+    )
+    total_revenue = models.DecimalField(
+        max_digits=20, decimal_places=2, validators=[MinValueValidator(0)], default=0.00
+    )
+
     class Meta:
         unique_together=('company','year')
         ordering=['-year']
     def __str__(self):
         return f"{self.company.name} - Financials {self.year}"
+
+    # Calculated ratios as properties
+    @property
+    def current_ratio(self):
+        """Current Ratio: Current Assets (CA) / Current Liabilities (CL). Example min: 1"""
+        if self.current_liabilities == 0:
+            return 0
+        return self.current_assets / self.current_liabilities
+
+    @property
+    def cash_ratio(self):
+        """Cash Ratio: Cash and Bank (C&B) / Current Liabilities (CL). Example min: N/A (optional)"""
+        if self.current_liabilities == 0:
+            return 0
+        return self.cash_and_bank / self.current_liabilities
+
+    @property
+    def working_capital(self):
+        """Working Capital: Current Assets (CA) - Current Liabilities (CL). Example min: 1"""
+        return self.current_assets - self.current_liabilities
+
+    @property
+    def gross_profit_margin(self):
+        """Gross Profit Margin: (Gross Profit (GP) / Total Revenue (TR)) * 100. Example min: 10"""
+        if self.total_revenue == 0:
+            return 0
+        return (self.gross_profit / self.total_revenue) * 100
+
+    @property
+    def debt_to_equity_ratio(self):
+        """Debt to Equity Ratio: Total Liabilities (TL) / Total Equity (TE). Example min: 1"""
+        if self.total_equity == 0:
+            return 0
+        return self.total_liabilities / self.total_equity
+
+    @property
+    def return_on_assets(self):
+        """Return on Assets: (Profit before Tax (PBT) / Total Assets (TA)) * 100. Example min: 5"""
+        if self.total_assets == 0:
+            return 0
+        return (self.profit_before_tax / self.total_assets) * 100
     
 class CompanySourceOfFund(models.Model):
     CASH_AND_BANK = 'cash_and_bank'

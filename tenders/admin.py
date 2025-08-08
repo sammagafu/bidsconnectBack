@@ -2,7 +2,8 @@ from django.contrib import admin
 from django.core.exceptions import ValidationError
 from .models import (
     Category, SubCategory, ProcurementProcess, AgencyDetails, Tender, TenderRequiredDocument,
-    TenderSubscription, NotificationPreference, TenderNotification, TenderStatusHistory
+    TenderSubscription, NotificationPreference, TenderNotification, TenderStatusHistory,
+    TenderTechnicalSpecification  # NEW: Import new model
 )
 
 @admin.register(Category)
@@ -35,7 +36,8 @@ class AgencyDetailsAdmin(admin.ModelAdmin):
 
 @admin.register(Tender)
 class TenderAdmin(admin.ModelAdmin):
-    list_display = ('id', 'title', 'reference_number', 'status', 'category_name', 'subcategory_name', 'procurement_process_name', 'agency_name')
+    # UPDATED: Add new field to list_display and fields
+    list_display = ('id', 'title', 'reference_number', 'status', 'category_name', 'subcategory_name', 'procurement_process_name', 'agency_name', 'allow_alternative_delivery')
     list_filter = ('status', 'category', 'subcategory', 'procurement_process', 'tender_type_country', 'tender_type_sector')
     search_fields = ('title', 'reference_number', 'tenderdescription')
     readonly_fields = ('created_by', 'created_at', 'updated_at', 'last_status_change')
@@ -43,10 +45,13 @@ class TenderAdmin(admin.ModelAdmin):
     def clean(self):
         data = self.cleaned_data
         if data.get('tender_securing_type') == 'Tender Security':
-            if not (data.get('tender_Security_percentage') or data.get('tender_Security_amount')):
+            if not (data.get('tender_security_percentage') or data.get('tender_security_amount')):
                 raise ValidationError(
                     "When Tender Securing Type is 'Tender Security', you must provide either Security Percentage or Security Amount."
                 )
+        # NEW: Example validation for new fields
+        if data.get('allow_alternative_delivery') and not data.get('completion_period_days'):
+            raise ValidationError("If alternative delivery is allowed, a base completion period must be specified.")
         return data
 
     def save_model(self, request, obj, form, change):
@@ -148,3 +153,14 @@ class TenderNotificationInline(admin.TabularInline):
     extra = 0
     readonly_fields = ('subscription', 'tender', 'sent_at', 'is_sent', 'delivery_status', 'created_at')
     can_delete = False
+
+# NEW: Admin for new model
+@admin.register(TenderTechnicalSpecification)
+class TenderTechnicalSpecificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'tender_title', 'category', 'complied')
+    list_filter = ('category', 'complied')
+    search_fields = ('tender__title', 'description')
+
+    def tender_title(self, obj):
+        return obj.tender.title
+    tender_title.short_description = 'Tender'

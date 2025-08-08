@@ -20,6 +20,7 @@ from .views import (
     NotificationPreferenceViewSet,
     TenderNotificationViewSet,
     TenderStatusHistoryViewSet,
+    TenderTechnicalSpecificationViewSet,  # NEW: Import new ViewSet
 )
 
 router = DefaultRouter()
@@ -80,6 +81,13 @@ router.register(
     r'tender-schedule-items',
     TenderScheduleItemViewSet,
     basename='tender-schedule'
+)
+
+# UPDATED: Add to router
+router.register(
+    r'tender-technical-specs',
+    TenderTechnicalSpecificationViewSet,
+    basename='tender-tech-spec'
 )
 
 # subscriptions & notifications

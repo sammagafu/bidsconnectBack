@@ -166,12 +166,44 @@ class CompanyAnnualTurnoverSerializer(serializers.ModelSerializer):
 
 
 class CompanyFinancialStatementSerializer(serializers.ModelSerializer):
+    # Expose calculated ratios as read-only fields
+    current_ratio = serializers.SerializerMethodField()
+    cash_ratio = serializers.SerializerMethodField()
+    working_capital = serializers.SerializerMethodField()
+    gross_profit_margin = serializers.SerializerMethodField()
+    debt_to_equity_ratio = serializers.SerializerMethodField()
+    return_on_assets = serializers.SerializerMethodField()
+
     class Meta:
         model = CompanyFinancialStatement
-        fields = ['year', 'currency', 'total_assets', 'total_liabilities',
-                  'total_equity', 'gross_profit', 'profit_before_tax',
-                  'cash_flow', 'file', 'audit_report', 'uploaded_at']
-        read_only_fields = ['uploaded_at']
+        fields = [
+            'year', 'currency', 'total_assets', 'total_liabilities',
+            'total_equity', 'gross_profit', 'profit_before_tax',
+            'cash_flow', 'file', 'audit_report', 'uploaded_at',
+            'current_assets', 'current_liabilities', 'cash_and_bank', 'total_revenue',
+            'current_ratio', 'cash_ratio', 'working_capital',
+            'gross_profit_margin', 'debt_to_equity_ratio', 'return_on_assets'
+        ]
+        read_only_fields = ['uploaded_at', 'current_ratio', 'cash_ratio', 'working_capital',
+                            'gross_profit_margin', 'debt_to_equity_ratio', 'return_on_assets']
+
+    def get_current_ratio(self, obj):
+        return obj.current_ratio
+
+    def get_cash_ratio(self, obj):
+        return obj.cash_ratio
+
+    def get_working_capital(self, obj):
+        return obj.working_capital
+
+    def get_gross_profit_margin(self, obj):
+        return obj.gross_profit_margin
+
+    def get_debt_to_equity_ratio(self, obj):
+        return obj.debt_to_equity_ratio
+
+    def get_return_on_assets(self, obj):
+        return obj.return_on_assets
 
 
 class CompanyLitigationSerializer(serializers.ModelSerializer):

@@ -6,7 +6,8 @@ from .models import (
     TenderExperienceRequirement, TenderPersonnelRequirement,
     TenderScheduleItem,
     TenderSubscription, NotificationPreference,
-    TenderNotification, TenderStatusHistory
+    TenderNotification, TenderStatusHistory,
+    TenderTechnicalSpecification  # NEW: Include new model
 )
 
 class SubCategorySerializer(serializers.ModelSerializer):
@@ -103,23 +104,26 @@ class TenderRequiredDocumentSerializer(serializers.ModelSerializer):
 class TenderFinancialRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderFinancialRequirement
-        fields = ['id', 'name', 'formula', 'minimum', 'unit', 'actual_value', 'complied', 'notes']
+        # UPDATED: Add new fields
+        fields = ['id', 'name', 'formula', 'minimum', 'unit', 'actual_value', 'complied', 'notes', 'start_date', 'end_date', 'jv_compliance', 'jv_percentage']
         read_only_fields = ['id', 'complied']
 
 
 class TenderTurnoverRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderTurnoverRequirement
-        fields = ['id', 'label', 'amount', 'currency', 'start_date', 'end_date', 'complied']
+        # UPDATED: Add new fields
+        fields = ['id', 'label', 'amount', 'currency', 'start_date', 'end_date', 'complied', 'jv_compliance', 'jv_percentage']
         read_only_fields = ['id', 'complied']
 
 
 class TenderExperienceRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderExperienceRequirement
+        # UPDATED: Add new fields
         fields = [
             'id', 'type', 'description', 'contract_count', 'min_value',
-            'currency', 'start_date', 'end_date', 'complied'
+            'currency', 'start_date', 'end_date', 'complied', 'jv_compliance', 'jv_percentage', 'jv_aggregation_note'
         ]
         read_only_fields = ['id', 'complied']
 
@@ -127,10 +131,11 @@ class TenderExperienceRequirementSerializer(serializers.ModelSerializer):
 class TenderPersonnelRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderPersonnelRequirement
+        # UPDATED: Add new field
         fields = [
             'id', 'role', 'min_education', 'professional_registration',
             'min_experience_yrs', 'appointment_duration_years',
-            'nationality_required', 'language_required', 'complied', 'notes'
+            'nationality_required', 'language_required', 'complied', 'notes', 'jv_compliance'
         ]
         read_only_fields = ['id', 'complied']
 
@@ -139,6 +144,14 @@ class TenderScheduleItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderScheduleItem
         fields = ['id', 'commodity', 'code', 'unit', 'quantity', 'specification']
+        read_only_fields = ['id']
+
+
+# NEW: Serializer for new model
+class TenderTechnicalSpecificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TenderTechnicalSpecification
+        fields = ['id', 'category', 'description', 'complied']
         read_only_fields = ['id']
 
 
@@ -152,33 +165,27 @@ class TenderSerializer(serializers.ModelSerializer):
     experience_requirements  = TenderExperienceRequirementSerializer(many=True, required=False)
     personnel_requirements   = TenderPersonnelRequirementSerializer(many=True, required=False)
     schedule_items           = TenderScheduleItemSerializer(many=True, required=False)
+    technical_specifications = TenderTechnicalSpecificationSerializer(many=True, required=False)  # NEW: Nested for new model
 
     # FK write fields
     category_id              = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(), source='category', write_only=True
     )
     subcategory_id           = serializers.PrimaryKeyRelatedField(
-        queryset=SubCategory.objects.all(), source='subcategory', write_only=True
+        queryset=SubCategory.objects.all(), source='subcategory', write_only=True, required=False
     )
     procurement_process_id   = serializers.PrimaryKeyRelatedField(
-        queryset=ProcurementProcess.objects.all(), source='procurement_process', write_only=True
+        queryset=ProcurementProcess.objects.all(), source='procurement_process', write_only=True, required=False
     )
     agency_id                = serializers.PrimaryKeyRelatedField(
-        queryset=AgencyDetails.objects.all(), source='agency', write_only=True
+        queryset=AgencyDetails.objects.all(), source='agency', write_only=True, required=False
     )
-
-    # nested read-only
-    category         = CategorySerializer(read_only=True)
-    subcategory      = SubCategorySerializer(read_only=True)
-    procurement_process = ProcurementProcessSerializer(read_only=True)
-    agency           = AgencyDetailsSerializer(read_only=True)
-    created_by       = serializers.StringRelatedField(read_only=True)
 
     class Meta:
         model = Tender
         fields = [
-            'id','slug','reference_number','title','tender_type_country','tender_type_sector','tenderdescription',
-            'category','category_id','subcategory','subcategory_id',
+            'id','slug','title','reference_number','tender_type_country','tender_type_sector',
+            'currency','category','category_id','subcategory','subcategory_id',
             'procurement_process','procurement_process_id','agency','agency_id',
             'publication_date','submission_deadline','clarification_deadline',
             'evaluation_start_date','evaluation_end_date',
@@ -189,6 +196,8 @@ class TenderSerializer(serializers.ModelSerializer):
             'status','last_status_change','version','created_by','created_at','updated_at',
             'required_documents','financial_requirements','turnover_requirements',
             'experience_requirements','personnel_requirements','schedule_items',
+            'technical_specifications',  # NEW
+            'allow_alternative_delivery',  # NEW
         ]
         read_only_fields = [
             'id','slug','status','last_status_change',
@@ -203,6 +212,7 @@ class TenderSerializer(serializers.ModelSerializer):
             'experience_requirements':  validated_data.pop('experience_requirements', []),
             'personnel_requirements':   validated_data.pop('personnel_requirements', []),
             'schedule_items':           validated_data.pop('schedule_items', []),
+            'technical_specifications': validated_data.pop('technical_specifications', []),  # NEW
         }
         tender = Tender.objects.create(**validated_data)
         for doc in nested['required_documents']:
@@ -217,6 +227,8 @@ class TenderSerializer(serializers.ModelSerializer):
             TenderPersonnelRequirement.objects.create(tender=tender, **pr)
         for si in nested['schedule_items']:
             TenderScheduleItem.objects.create(tender=tender, **si)
+        for ts in nested['technical_specifications']:  # NEW
+            TenderTechnicalSpecification.objects.create(tender=tender, **ts)
         return tender
 
     def update(self, instance, validated_data):
@@ -227,6 +239,7 @@ class TenderSerializer(serializers.ModelSerializer):
             'experience_requirements':  validated_data.pop('experience_requirements', None),
             'personnel_requirements':   validated_data.pop('personnel_requirements', None),
             'schedule_items':           validated_data.pop('schedule_items', None),
+            'technical_specifications': validated_data.pop('technical_specifications', None),  # NEW
         }
         # update scalars & FK
         for attr, val in validated_data.items():
@@ -258,6 +271,10 @@ class TenderSerializer(serializers.ModelSerializer):
             instance.schedule_items.all().delete()
             for si in nested['schedule_items']:
                 TenderScheduleItem.objects.create(tender=instance, **si)
+        if nested['technical_specifications'] is not None:  # NEW
+            instance.technical_specifications.all().delete()
+            for ts in nested['technical_specifications']:
+                TenderTechnicalSpecification.objects.create(tender=instance, **ts)
 
         return instance
 
