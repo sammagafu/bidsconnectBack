@@ -8,6 +8,7 @@ from django.dispatch import receiver
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.conf import settings
+from django.db.models import Avg, Sum
 
 
 class Category(models.Model):
@@ -135,7 +136,7 @@ class Tender(models.Model):
         ('GBP', 'British Pound'),
         ('JPY', 'Japanese Yen'),
         ('CNY', 'Chinese Yuan'),
-    )  
+    )
     TenderTypeCountry = (
         ('National', 'National Tendering'),
         ('International', 'International Tendering'),
@@ -151,6 +152,15 @@ class Tender(models.Model):
         ("Tender Securing Declaration", "Tender Securing Declaration"),
     )
 
+    # NEW: Added for gaps from documents
+    SOURCE_OF_FUNDS_CHOICES = (
+        ('government', 'Government Funds'),
+        ('loan', 'Loan'),
+        ('credit', 'Credit'),
+        ('grant', 'Grant'),
+        ('other', 'Other'),
+    )
+
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True, blank=True)
     reference_number = models.CharField(max_length=50, unique=True)
@@ -164,9 +174,6 @@ class Tender(models.Model):
     description = models.TextField(blank=True)
     publication_date = models.DateTimeField(null=True, blank=True)
     submission_deadline = models.DateTimeField()
-    clarification_deadline = models.DateTimeField(null=True, blank=True)
-    evaluation_start_date = models.DateTimeField(null=True, blank=True)
-    evaluation_end_date = models.DateTimeField(null=True, blank=True)
     validity_period_days = models.PositiveIntegerField(default=90)
     completion_period_days = models.PositiveIntegerField(null=True, blank=True)  # Used for delivery period
     litigation_history_start = models.DateField(null=True, blank=True)
@@ -187,9 +194,21 @@ class Tender(models.Model):
     # NEW: Flag for allowing alternative delivery schedules
     allow_alternative_delivery = models.BooleanField(default=False, help_text="Whether bidders can propose alternative delivery schedules")
 
+    # NEW: Fields added to address gaps from tender doc and checklis
+
+    source_of_funds = models.CharField(max_length=20, choices=SOURCE_OF_FUNDS_CHOICES, default='government')  # From tender doc
+
+    # NEW: For re-advertisement
+    re_advertised_from = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='re_advertisements')
+    re_advertisement_count = models.PositiveIntegerField(default=0, help_text="Number of times this tender has been re-advertised")
+
     class Meta:
         ordering = ['-created_at']
         indexes = [models.Index(fields=['slug', 'status'])]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_status = self.status
 
     def __str__(self):
         return f"{self.reference_number} - {self.title}"
@@ -204,18 +223,29 @@ class Tender(models.Model):
                 counter += 1
         if self.status == 'published' and not self.publication_date:
             self.publication_date = timezone.now()
+        if self.status != self._original_status:  # Track status change
+            self.last_status_change = timezone.now()
+            TenderStatusHistory.objects.create(tender=self, status=self.status, changed_by=self.created_by)
         super().save(*args, **kwargs)
+        self._original_status = self.status  # Update after save
 
     def send_notification_emails(self):
-        subscriptions = TenderSubscription.objects.filter(category=self.category)
+        subscriptions = TenderSubscription.objects.filter(
+            models.Q(category=self.category) |
+            models.Q(subcategory=self.subcategory) |
+            models.Q(procurement_process=self.procurement_process) |
+            models.Q(keywords__icontains=self.title)  # Simple keyword match
+        ).select_related('user').filter(is_active=True)
         for sub in subscriptions:
             user = sub.user
-            prefs = NotificationPreference.objects.get_or_create(user=user)[0]
-            if prefs.email_notifications:
-                html_message = render_to_string('emails/new_tender.html', {'tender': self, 'user': user})
+            pref = user.notification_preference
+            if pref and pref.email_notifications:
+                context = {'tender': self, 'user': user}
+                html_message = render_to_string('emails/tender_notification.html', context)
+                plain_message = f"New Tender: {self.title}\nDescription: {self.description}"
                 send_mail(
-                    subject=f'New Tender Published: {self.title}',
-                    message='',
+                    subject=f"New Tender Published: {self.title}",
+                    message=plain_message,
                     from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[user.email],
                     html_message=html_message,
@@ -223,8 +253,137 @@ class Tender(models.Model):
                 )
                 TenderNotification.objects.create(subscription=sub, tender=self, sent_at=timezone.now(), is_sent=True)
 
+    # NEW: Simple compliance check example (expand as needed)
+    def check_security_compliance(self):
+        if self.tender_securing_type == "Tender Security" and not (self.tender_security_percentage or self.tender_security_amount):
+            raise ValueError("Security percentage or amount required for Tender Security type.")
+        return True
 
-# NEW: Model for detailed technical specifications conformance
+    # NEW: Method to re-advertise the tender
+    def re_advertise(self, new_submission_deadline, new_publication_date=None, new_clarification_deadline=None, new_evaluation_start_date=None, new_evaluation_end_date=None):
+        if self.status not in ['closed', 'canceled']:
+            raise ValueError("Only closed or canceled tenders can be re-advertised.")
+        if timezone.now() <= self.submission_deadline:
+            raise ValueError("Tender is not expired yet.")
+
+        # Create a new tender copy
+        new_tender = Tender(
+            title=self.title + " (Re-advertised)",
+            reference_number=self.reference_number + "-RE",
+            tender_type_country=self.tender_type_country,
+            tender_type_sector=self.tender_type_sector,
+            currency=self.currency,
+            category=self.category,
+            subcategory=self.subcategory,
+            procurement_process=self.procurement_process,
+            agency=self.agency,
+            description=self.description,
+            publication_date=new_publication_date or timezone.now(),
+            submission_deadline=new_submission_deadline,
+            validity_period_days=self.validity_period_days,
+            completion_period_days=self.completion_period_days,
+            litigation_history_start=self.litigation_history_start,
+            litigation_history_end=self.litigation_history_end,
+            tender_document=self.tender_document,
+            tender_fees=self.tender_fees,
+            tender_securing_type=self.tender_securing_type,
+            tender_security_percentage=self.tender_security_percentage,
+            tender_security_amount=self.tender_security_amount,
+            tender_security_currency=self.tender_security_currency,
+            status="published",
+            version=self.version + 1,
+            created_by=self.created_by,
+            allow_alternative_delivery=self.allow_alternative_delivery,
+            source_of_funds=self.source_of_funds,
+            re_advertised_from=self,
+            re_advertisement_count=self.re_advertisement_count + 1
+        )
+        new_tender.save()
+
+        # Copy related objects
+        for doc in self.required_documents.all():
+            TenderRequiredDocument.objects.create(
+                tender=new_tender,
+                name=doc.name,
+                description=doc.description,
+                document_type=doc.document_type
+            )
+        for fin_req in self.financial_requirements.all():
+            TenderFinancialRequirement.objects.create(
+                tender=new_tender,
+                name=fin_req.name,
+                formula=fin_req.formula,
+                minimum=fin_req.minimum,
+                unit=fin_req.unit,
+                notes=fin_req.notes,
+                jv_compliance=fin_req.jv_compliance,
+                financial_sources=fin_req.financial_sources
+            )
+        for turnover in self.turnover_requirements.all():
+            TenderTurnoverRequirement.objects.create(
+                tender=new_tender,
+                label=turnover.label,
+                amount=turnover.amount,
+                currency=turnover.currency,
+                start_date=turnover.start_date,
+                end_date=turnover.end_date,
+                jv_compliance=turnover.jv_compliance,
+                jv_percentage=turnover.jv_percentage
+            )
+        for exp in self.experience_requirements.all():
+            TenderExperienceRequirement.objects.create(
+                tender=new_tender,
+                type=exp.type,
+                description=exp.description,
+                contract_count=exp.contract_count,
+                min_value=exp.min_value,
+                currency=exp.currency,
+                start_date=exp.start_date,
+                end_date=exp.end_date,
+                reputation_notes=exp.reputation_notes,
+                jv_compliance=exp.jv_compliance,
+                jv_percentage=exp.jv_percentage,
+                jv_aggregation_note=exp.jv_aggregation_note
+            )
+        for pers in self.personnel_requirements.all():
+            TenderPersonnelRequirement.objects.create(
+                tender=new_tender,
+                role=pers.role,
+                min_education=pers.min_education,
+                professional_registration=pers.professional_registration,
+                min_experience_yrs=pers.min_experience_yrs,
+                appointment_duration_years=pers.appointment_duration_years,
+                nationality_required=pers.nationality_required,
+                language_required=pers.language_required,
+                notes=pers.notes,
+                age_min=pers.age_min,
+                age_max=pers.age_max,
+                specialized_education=pers.specialized_education,
+                professional_certifications=pers.professional_certifications,
+                jv_compliance=pers.jv_compliance
+            )
+        for item in self.schedule_items.all():
+            TenderScheduleItem.objects.create(
+                tender=new_tender,
+                commodity=item.commodity,
+                code=item.code,
+                unit=item.unit,
+                quantity=item.quantity,
+                specification=item.specification
+            )
+        for tech in self.technical_specifications.all():
+            TenderTechnicalSpecification.objects.create(
+                tender=new_tender,
+                category=tech.category,
+                description=tech.description
+            )
+
+        # Send notifications for the new re-advertised tender
+        new_tender.send_notification_emails()
+
+        return new_tender
+
+
 class TenderTechnicalSpecification(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='technical_specifications')
     category = models.CharField(max_length=100, choices=[
@@ -244,62 +403,61 @@ class TenderTechnicalSpecification(models.Model):
 
 
 class TenderRequiredDocument(models.Model):
-    DOCUMENT_TYPES = (
-        ('legal', 'Legal'),
-        ('financial', 'Financial'),
-        ('technical', 'Technical'),
-        ('other', 'Other'),
-    )
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='required_documents')
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES, default='other')
+    document_type = models.CharField(max_length=120, default='other')
+    IS_REQUIRED_CHOICES = (
+        ('required', 'Required'),
+        ('optional', 'Optional'),
+    )
+    is_required = models.CharField(
+        max_length=10,
+        choices=IS_REQUIRED_CHOICES,
+        default='required',
+        help_text="Is this document required or optional?"
+    )
 
     def __str__(self):
         return f"{self.name} for {self.tender.reference_number}"
 
 
 class TenderFinancialRequirement(models.Model):
+    JV_COMPLIANCE_CHOICES = (
+        ('separate', 'Separate for Each Partner'),
+        ('combined', 'Combined for JV'),
+    )
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='financial_requirements')
-    name = models.CharField(max_length=100)
-    formula = models.CharField(max_length=200, blank=True)
-    minimum = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    unit = models.CharField(max_length=50, blank=True)
-    actual_value = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    name = models.CharField(max_length=100, help_text="e.g., Current Ratio")
+    formula = models.CharField(max_length=255, blank=True, help_text="e.g., CA/CL")
+    minimum = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    unit = models.CharField(max_length=50, blank=True, help_text="e.g., Ratio, %")
+    actual_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # For evaluation
     complied = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
-
-    # NEW: Period for financial ratios/statements
-    start_date = models.DateField(null=True, blank=True)
-    end_date = models.DateField(null=True, blank=True)
-
-    # NEW: JV compliance rules
-    JV_COMPLIANCE_CHOICES = (
-        ('combined', 'All Parties Combined Must Meet'),
-        ('each', 'Each Member Must Meet'),
-        ('one', 'One Member Must Meet'),
-        ('custom', 'Custom'),
-    )
     jv_compliance = models.CharField(max_length=20, choices=JV_COMPLIANCE_CHOICES, default='combined', blank=True)
-    jv_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)], help_text="Percentage for each/one member if applicable")
+
+    # NEW: Added for financial resources from checklist
+    financial_sources = models.TextField(blank=True, help_text="e.g., Cash, Loans, Grants")
 
     def __str__(self):
         return f"{self.name} for {self.tender.reference_number}"
 
-    def evaluate(self, value=None):
-        v = value if value is not None else self.actual_value
-        self.complied = v >= self.minimum if self.minimum else True
+    def evaluate(self, provided_value):
+        if self.minimum is not None:
+            self.complied = provided_value >= self.minimum
+        self.actual_value = provided_value
         self.save()
         return self.complied
 
 
 class TenderTurnoverRequirement(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='turnover_requirements')
-    label = models.CharField(max_length=100)
-    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    label = models.CharField(max_length=100, default="Average Annual Turnover")
+    amount = models.DecimalField(max_digits=18, decimal_places=2, validators=[MinValueValidator(0)])
     currency = models.CharField(max_length=3, choices=Tender.CurrencyTYpes, default='TZS')
-    start_date = models.DateField()
-    end_date = models.DateField()
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     complied = models.BooleanField(default=False)
 
     # NEW: JV compliance rules (similar to above)
@@ -307,24 +465,26 @@ class TenderTurnoverRequirement(models.Model):
     jv_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
 
     def __str__(self):
-        return f"{self.label} for {self.tender.reference_number}"
+        return f"Turnover Req for {self.tender.reference_number}"
 
 
 class TenderExperienceRequirement(models.Model):
     EXPERIENCE_TYPES = (
         ('general', 'General Experience'),
-        ('specific', 'Specific Experience'),
-        ('contract_management', 'Contract Management Experience'),
+        ('specific', 'Specific/Similar Projects'),
     )
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='experience_requirements')
-    type = models.CharField(max_length=20, choices=EXPERIENCE_TYPES)
-    description = models.TextField()
-    contract_count = models.PositiveIntegerField()
-    min_value = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
-    currency = models.CharField(max_length=3, choices=Tender.CurrencyTYpes, default='TZS', blank=True)
+    type = models.CharField(max_length=20, choices=EXPERIENCE_TYPES, default='specific')
+    description = models.TextField(blank=True)
+    contract_count = models.PositiveIntegerField(default=1)
+    min_value = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
+    currency = models.CharField(max_length=3, choices=Tender.CurrencyTYpes, default='TZS')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     complied = models.BooleanField(default=False)
+
+    # NEW: Added for reputation from checklist
+    reputation_notes = models.TextField(blank=True, help_text="Reputation requirements or notes")
 
     # NEW: JV compliance rules
     jv_compliance = models.CharField(max_length=20, choices=TenderFinancialRequirement.JV_COMPLIANCE_CHOICES, default='combined', blank=True)
@@ -332,27 +492,33 @@ class TenderExperienceRequirement(models.Model):
     jv_aggregation_note = models.TextField(blank=True, help_text="Notes on aggregation for JV, e.g., no aggregation for value")
 
     def __str__(self):
-        return f"{self.get_type_display()} experience for {self.tender.reference_number}"
-
-    def evaluate(self, count=None, value=None):
-        c = count if count is not None else self.contract_count
-        v = value if value is not None else self.min_value
-        self.complied = c >= self.contract_count and v >= self.min_value
-        self.save()
-        return self.complied
+        return f"{self.get_type_display()} for {self.tender.reference_number}"
 
 
 class TenderPersonnelRequirement(models.Model):
+    EDUCATION_LEVELS = (
+        ('certificate', 'Certificate'),
+        ('diploma', 'Diploma'),
+        ('bachelor', "Bachelor's Degree"),
+        ('master', "Master's Degree"),
+        ('phd', 'PhD'),
+    )
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='personnel_requirements')
     role = models.CharField(max_length=100)
-    min_education = models.CharField(max_length=100)
-    professional_registration = models.BooleanField(default=False)
-    min_experience_yrs = models.PositiveIntegerField()
-    appointment_duration_years = models.PositiveIntegerField()
-    nationality_required = models.CharField(max_length=50, blank=True)
+    min_education = models.CharField(max_length=20, choices=EDUCATION_LEVELS, default='bachelor')
+    professional_registration = models.CharField(max_length=100, blank=True, help_text="e.g., ERB Registered")
+    min_experience_yrs = models.PositiveSmallIntegerField(default=3)
+    appointment_duration_years = models.PositiveSmallIntegerField(null=True, blank=True)
+    nationality_required = models.CharField(max_length=100, blank=True)
     language_required = models.CharField(max_length=100, blank=True)
     complied = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
+
+    # NEW: Added for checklist gaps (age, specialized education, certifications)
+    age_min = models.PositiveSmallIntegerField(default=18, validators=[MinValueValidator(18)])
+    age_max = models.PositiveSmallIntegerField(default=60, validators=[MaxValueValidator(60)])
+    specialized_education = models.TextField(blank=True, help_text="e.g., Mechanical Engineering Specialization")
+    professional_certifications = models.TextField(blank=True, help_text="e.g., HVAC Certification")
 
     # NEW: JV compliance (if applicable for personnel)
     jv_compliance = models.CharField(max_length=20, choices=TenderFinancialRequirement.JV_COMPLIANCE_CHOICES, default='combined', blank=True)

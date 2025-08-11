@@ -7,7 +7,7 @@ from .models import (
     TenderScheduleItem,
     TenderSubscription, NotificationPreference,
     TenderNotification, TenderStatusHistory,
-    TenderTechnicalSpecification  # NEW: Include new model
+    TenderTechnicalSpecification
 )
 
 class SubCategorySerializer(serializers.ModelSerializer):
@@ -16,7 +16,7 @@ class SubCategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SubCategory
-        fields = ['id', 'name', 'description', '_destroy']
+        fields = ['id', 'name', 'slug', 'category', 'description', '_destroy']
         read_only_fields = ['id']
 
 
@@ -27,46 +27,6 @@ class CategoryWithSubcategoriesSerializer(serializers.ModelSerializer):
         model = Category
         fields = ['id', 'name', 'slug', 'subcategories']
         read_only_fields = ['id', 'slug']
-
-    def create(self, validated_data):
-        subs_data = validated_data.pop('subcategories', [])
-        category = Category.objects.create(**validated_data)
-        for sub_data in subs_data:
-            if sub_data.pop('_destroy', False):
-                continue
-            SubCategory.objects.create(category=category, **sub_data)
-        return category
-
-    def update(self, instance, validated_data):
-        subs_data = validated_data.pop('subcategories', [])
-        instance.name = validated_data.get('name', instance.name)
-        instance.save()
-
-        existing_ids = set(instance.subcategories.values_list('id', flat=True))
-        incoming_ids = set()
-
-        for sub_data in subs_data:
-            sub_id = sub_data.get('id')
-            if sub_id and sub_data.pop('_destroy', False):
-                SubCategory.objects.filter(id=sub_id, category=instance).delete()
-                continue
-            sub_data.pop('_destroy', None)
-            if sub_id and sub_id in existing_ids:
-                obj = instance.subcategories.get(id=sub_id)
-                obj.name = sub_data.get('name', obj.name)
-                obj.description = sub_data.get('description', obj.description)
-                obj.save()
-                incoming_ids.add(obj.id)
-            else:
-                new_obj = SubCategory.objects.create(category=instance, **sub_data)
-                incoming_ids.add(new_obj.id)
-
-        # delete any omitted
-        to_delete = existing_ids - incoming_ids
-        if to_delete:
-            SubCategory.objects.filter(id__in=to_delete, category=instance).delete()
-
-        return instance
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -97,22 +57,20 @@ class AgencyDetailsSerializer(serializers.ModelSerializer):
 class TenderRequiredDocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderRequiredDocument
-        fields = ['id', 'name', 'description', 'document_type']
+        fields = ['id', 'name', 'description', 'document_type', 'is_required']
         read_only_fields = ['id']
 
 
 class TenderFinancialRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderFinancialRequirement
-        # UPDATED: Add new fields
-        fields = ['id', 'name', 'formula', 'minimum', 'unit', 'actual_value', 'complied', 'notes', 'start_date', 'end_date', 'jv_compliance', 'jv_percentage']
+        fields = ['id', 'name', 'formula', 'minimum', 'unit', 'actual_value', 'complied', 'notes', 'jv_compliance', 'financial_sources']
         read_only_fields = ['id', 'complied']
 
 
 class TenderTurnoverRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderTurnoverRequirement
-        # UPDATED: Add new fields
         fields = ['id', 'label', 'amount', 'currency', 'start_date', 'end_date', 'complied', 'jv_compliance', 'jv_percentage']
         read_only_fields = ['id', 'complied']
 
@@ -120,10 +78,10 @@ class TenderTurnoverRequirementSerializer(serializers.ModelSerializer):
 class TenderExperienceRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderExperienceRequirement
-        # UPDATED: Add new fields
         fields = [
             'id', 'type', 'description', 'contract_count', 'min_value',
-            'currency', 'start_date', 'end_date', 'complied', 'jv_compliance', 'jv_percentage', 'jv_aggregation_note'
+            'currency', 'start_date', 'end_date', 'complied',
+            'reputation_notes', 'jv_compliance', 'jv_percentage', 'jv_aggregation_note'
         ]
         read_only_fields = ['id', 'complied']
 
@@ -131,11 +89,11 @@ class TenderExperienceRequirementSerializer(serializers.ModelSerializer):
 class TenderPersonnelRequirementSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderPersonnelRequirement
-        # UPDATED: Add new field
         fields = [
             'id', 'role', 'min_education', 'professional_registration',
             'min_experience_yrs', 'appointment_duration_years',
-            'nationality_required', 'language_required', 'complied', 'notes', 'jv_compliance'
+            'nationality_required', 'language_required', 'complied', 'notes',
+            'age_min', 'age_max', 'specialized_education', 'professional_certifications', 'jv_compliance'
         ]
         read_only_fields = ['id', 'complied']
 
@@ -147,7 +105,6 @@ class TenderScheduleItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
-# NEW: Serializer for new model
 class TenderTechnicalSpecificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = TenderTechnicalSpecification
@@ -165,39 +122,22 @@ class TenderSerializer(serializers.ModelSerializer):
     experience_requirements  = TenderExperienceRequirementSerializer(many=True, required=False)
     personnel_requirements   = TenderPersonnelRequirementSerializer(many=True, required=False)
     schedule_items           = TenderScheduleItemSerializer(many=True, required=False)
-    technical_specifications = TenderTechnicalSpecificationSerializer(many=True, required=False)  # NEW: Nested for new model
-
-    # FK write fields
-    category_id              = serializers.PrimaryKeyRelatedField(
-        queryset=Category.objects.all(), source='category', write_only=True
-    )
-    subcategory_id           = serializers.PrimaryKeyRelatedField(
-        queryset=SubCategory.objects.all(), source='subcategory', write_only=True, required=False
-    )
-    procurement_process_id   = serializers.PrimaryKeyRelatedField(
-        queryset=ProcurementProcess.objects.all(), source='procurement_process', write_only=True, required=False
-    )
-    agency_id                = serializers.PrimaryKeyRelatedField(
-        queryset=AgencyDetails.objects.all(), source='agency', write_only=True, required=False
-    )
+    technical_specifications = TenderTechnicalSpecificationSerializer(many=True, required=False)
 
     class Meta:
         model = Tender
         fields = [
-            'id','slug','title','reference_number','tender_type_country','tender_type_sector',
-            'currency','category','category_id','subcategory','subcategory_id',
-            'procurement_process','procurement_process_id','agency','agency_id',
-            'publication_date','submission_deadline','clarification_deadline',
-            'evaluation_start_date','evaluation_end_date',
-            'validity_period_days','completion_period_days',
-            'litigation_history_start','litigation_history_end','tender_document',
-            'tender_fees','tender_securing_type','tender_security_percentage',
-            'tender_security_amount','tender_security_currency',
-            'status','last_status_change','version','created_by','created_at','updated_at',
+            'id', 'title', 'slug', 'reference_number', 'tender_type_country', 'tender_type_sector',
+            'currency', 'category', 'subcategory', 'procurement_process', 'agency',
+            'description', 'publication_date', 'submission_deadline', 'validity_period_days',
+            'completion_period_days', 'litigation_history_start', 'litigation_history_end',
+            'tender_document', 'tender_fees', 'tender_securing_type', 'tender_security_percentage',
+            'tender_security_amount', 'tender_security_currency', 'status', 'last_status_change',
+            'version', 'created_by', 'created_at', 'updated_at', 'allow_alternative_delivery',
+            'source_of_funds', 're_advertised_from', 're_advertisement_count',
             'required_documents','financial_requirements','turnover_requirements',
             'experience_requirements','personnel_requirements','schedule_items',
-            'technical_specifications',  # NEW
-            'allow_alternative_delivery',  # NEW
+            'technical_specifications'
         ]
         read_only_fields = [
             'id','slug','status','last_status_change',
@@ -212,7 +152,7 @@ class TenderSerializer(serializers.ModelSerializer):
             'experience_requirements':  validated_data.pop('experience_requirements', []),
             'personnel_requirements':   validated_data.pop('personnel_requirements', []),
             'schedule_items':           validated_data.pop('schedule_items', []),
-            'technical_specifications': validated_data.pop('technical_specifications', []),  # NEW
+            'technical_specifications': validated_data.pop('technical_specifications', []),
         }
         tender = Tender.objects.create(**validated_data)
         for doc in nested['required_documents']:
@@ -227,7 +167,7 @@ class TenderSerializer(serializers.ModelSerializer):
             TenderPersonnelRequirement.objects.create(tender=tender, **pr)
         for si in nested['schedule_items']:
             TenderScheduleItem.objects.create(tender=tender, **si)
-        for ts in nested['technical_specifications']:  # NEW
+        for ts in nested['technical_specifications']:
             TenderTechnicalSpecification.objects.create(tender=tender, **ts)
         return tender
 
@@ -239,7 +179,7 @@ class TenderSerializer(serializers.ModelSerializer):
             'experience_requirements':  validated_data.pop('experience_requirements', None),
             'personnel_requirements':   validated_data.pop('personnel_requirements', None),
             'schedule_items':           validated_data.pop('schedule_items', None),
-            'technical_specifications': validated_data.pop('technical_specifications', None),  # NEW
+            'technical_specifications': validated_data.pop('technical_specifications', None),
         }
         # update scalars & FK
         for attr, val in validated_data.items():
@@ -271,7 +211,7 @@ class TenderSerializer(serializers.ModelSerializer):
             instance.schedule_items.all().delete()
             for si in nested['schedule_items']:
                 TenderScheduleItem.objects.create(tender=instance, **si)
-        if nested['technical_specifications'] is not None:  # NEW
+        if nested['technical_specifications'] is not None:
             instance.technical_specifications.all().delete()
             for ts in nested['technical_specifications']:
                 TenderTechnicalSpecification.objects.create(tender=instance, **ts)

@@ -293,15 +293,37 @@ class CompanyDocument(models.Model):
         self.full_clean()
         super().save(*args,**kwargs)
 
-class CompanyLitigation(models.Model):
-    company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='litigations')
-    title=models.CharField(max_length=255)
-    description=models.TextField(blank=True)
-    start_date=models.DateField()
-    end_date=models.DateField(blank=True,null=True)
-    status=models.CharField(max_length=50,choices=[('open','Open'),('closed','Closed'),('settled','Settled')])
+
+class CompanyBiddingProfile(models.Model):
+    company = models.OneToOneField(
+        Company, on_delete=models.CASCADE, related_name='bidding_profile'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company Bidding Profile"
+        verbose_name_plural = "Company Bidding Profiles"
+
     def __str__(self):
-        return f"{self.company.name} - {self.title} ({self.status})"
+        return f"Bidding Profile for {self.company.name}"
+
+
+class CompanyLitigation(models.Model):
+    bidding_profile = models.ForeignKey(
+        CompanyBiddingProfile, on_delete=models.CASCADE, related_name='litigations'
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    start_date = models.DateField()
+    end_date = models.DateField(blank=True, null=True)
+    status = models.CharField(
+        max_length=50, choices=[('open', 'Open'), ('closed', 'Closed'), ('settled', 'Settled')]
+    )
+
+    def __str__(self):
+        return f"{self.bidding_profile.company.name} - {self.title} ({self.status})"
+
 
 class CompanyPersonnel(models.Model):
     EMPLOYEE_TYPE_CHOICES = [
@@ -315,8 +337,8 @@ class CompanyPersonnel(models.Model):
         ('other',  'Other'),
     ]
 
-    company          = models.ForeignKey(
-        Company, on_delete=models.CASCADE, related_name='personnel'
+    bidding_profile    = models.ForeignKey(
+        CompanyBiddingProfile, on_delete=models.CASCADE, related_name='personnel'
     )
     uuid             = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
 
@@ -356,10 +378,10 @@ class CompanyPersonnel(models.Model):
 
     class Meta:
         ordering = ['last_name', 'first_name']
-        unique_together = [('company', 'uuid')]
+        unique_together = [('bidding_profile', 'uuid')]
 
     def __str__(self):
-        return f"{self.company.name} – {self.first_name} {self.last_name} ({self.job_title})"
+        return f"{self.bidding_profile.company.name} – {self.first_name} {self.last_name} ({self.job_title})"
 
     def verify(self):
         """Mark this personnel as verified now."""
@@ -368,19 +390,25 @@ class CompanyPersonnel(models.Model):
             self.verified_at = timezone.now()
             self.save(update_fields=['is_verified', 'verified_at'])
 
+
 class CompanyAnnualTurnover(models.Model):
-    company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='annual_turnovers')
+    bidding_profile = models.ForeignKey(
+        CompanyBiddingProfile, on_delete=models.CASCADE, related_name='annual_turnovers'
+    )
     year=models.PositiveIntegerField()
     currency=models.CharField(max_length=10)
     amount=models.DecimalField(max_digits=20,decimal_places=2,validators=[MinValueValidator(0)])
     class Meta:
-        unique_together=('company','year')
+        unique_together=('bidding_profile','year')
         ordering=['-year']
     def __str__(self):
-        return f"{self.company.name} - {self.year}: {self.amount} {self.currency}"
+        return f"{self.bidding_profile.company.name} - {self.year}: {self.amount} {self.currency}"
+
 
 class CompanyFinancialStatement(models.Model):
-    company=models.ForeignKey(Company,on_delete=models.CASCADE,related_name='financial_statements')
+    bidding_profile = models.ForeignKey(
+        CompanyBiddingProfile, on_delete=models.CASCADE, related_name='financial_statements'
+    )
     year=models.PositiveIntegerField()
     currency=models.CharField(max_length=10)
     total_assets=models.DecimalField(max_digits=20,decimal_places=2,validators=[MinValueValidator(0)])
@@ -408,10 +436,10 @@ class CompanyFinancialStatement(models.Model):
     )
 
     class Meta:
-        unique_together=('company','year')
+        unique_together=('bidding_profile','year')
         ordering=['-year']
     def __str__(self):
-        return f"{self.company.name} - Financials {self.year}"
+        return f"{self.bidding_profile.company.name} - Financials {self.year}"
 
     # Calculated ratios as properties
     @property
@@ -464,8 +492,8 @@ class CompanySourceOfFund(models.Model):
         (INVENTORIES, 'Inventories'),
     ]
 
-    company = models.ForeignKey(
-        Company,
+    bidding_profile = models.ForeignKey(
+        CompanyBiddingProfile,
         on_delete=models.CASCADE,
         related_name='sources_of_funds'
     )
@@ -491,7 +519,7 @@ class CompanySourceOfFund(models.Model):
         ordering = ['-uploaded_at']
 
     def __str__(self):
-        return f"{self.company.name} – {self.get_source_type_display()}: {self.amount} {self.currency}"
+        return f"{self.bidding_profile.company.name} – {self.get_source_type_display()}: {self.amount} {self.currency}"
 
 class AuditLog(models.Model):
     action=models.CharField(max_length=50)

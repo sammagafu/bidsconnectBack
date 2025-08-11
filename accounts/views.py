@@ -24,6 +24,7 @@ from .models import (
     CompanyDocument,
     CompanyOffice,
     CompanyCertification,
+    CompanyBiddingProfile,  # NEW: Import new model
     CompanySourceOfFund,
     CompanyAnnualTurnover,
     CompanyFinancialStatement,
@@ -41,11 +42,13 @@ from .serializers import (
     CompanyDocumentSerializer,
     CompanyOfficeSerializer,
     CompanyCertificationSerializer,
+    CompanyBiddingProfileSerializer,  # NEW: Assume this exists; add if not
     CompanySourceOfFundSerializer,
     CompanyAnnualTurnoverSerializer,
     CompanyFinancialStatementSerializer,
     CompanyLitigationSerializer,
     CompanyPersonnelSerializer,
+    AuditLogSerializer,  # NEW: Assume this exists; add if not
 )
 from .permissions import IsCompanyOwner, IsCompanyAdminOrOwner
 from .constants import (
@@ -363,6 +366,25 @@ class CompanyCertificationViewSet(viewsets.ModelViewSet):
             )
 
 
+# NEW: ViewSet for CompanyBiddingProfile (since it's OneToOne, limit to RetrieveUpdate)
+class CompanyBiddingProfileViewSet(mixins.RetrieveModelMixin, mixins.UpdateModelMixin, viewsets.GenericViewSet):
+    serializer_class = CompanyBiddingProfileSerializer
+    permission_classes = [permissions.IsAuthenticated, IsCompanyAdminOrOwner]
+    throttle_classes = [UserRateThrottle]
+
+    def get_object(self):
+        company = get_object_or_404(Company, id=self.kwargs['company_pk'], deleted_at__isnull=True)
+        return get_object_or_404(CompanyBiddingProfile, company=company)
+
+    def perform_update(self, serializer):
+        profile = serializer.save()
+        AuditLog.objects.create(
+            action='bidding_profile_updated',
+            user=self.request.user,
+            details={'company_id': str(profile.company.id)}
+        )
+
+
 class CompanySourceOfFundViewSet(viewsets.ModelViewSet):
     serializer_class = CompanySourceOfFundSerializer
     permission_classes = [permissions.IsAuthenticated, IsCompanyAdminOrOwner]
@@ -370,20 +392,16 @@ class CompanySourceOfFundViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return CompanySourceOfFund.objects.filter(
-            company_id=self.kwargs['company_pk'],
-            company__deleted_at__isnull=True
+            bidding_profile__company_id=self.kwargs['company_pk']
         )
 
     def perform_create(self, serializer):
-        src = serializer.save(
-            company=get_object_or_404(
-                Company, id=self.kwargs['company_pk'], deleted_at__isnull=True
-            )
-        )
+        bidding_profile = get_object_or_404(CompanyBiddingProfile, company_id=self.kwargs['company_pk'])
+        src = serializer.save(bidding_profile=bidding_profile)
         AuditLog.objects.create(
             action='source_of_fund_added',
             user=self.request.user,
-            details={'company_id': str(src.company.id), 'source_id': src.id}
+            details={'company_id': str(src.bidding_profile.company.id), 'source_id': src.id}
         )
 
 
@@ -395,18 +413,16 @@ class CompanyAnnualTurnoverViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return CompanyAnnualTurnover.objects.filter(
-            company_id=self.kwargs['company_pk'],
-            company__deleted_at__isnull=True
+            bidding_profile__company_id=self.kwargs['company_pk']
         )
 
     def perform_create(self, serializer):
-        turnover = serializer.save(
-            company=get_object_or_404(Company, id=self.kwargs['company_pk'], deleted_at__isnull=True)
-        )
+        bidding_profile = get_object_or_404(CompanyBiddingProfile, company_id=self.kwargs['company_pk'])
+        turnover = serializer.save(bidding_profile=bidding_profile)
         AuditLog.objects.create(
             action='annual_turnover_added',
             user=self.request.user,
-            details={'company_id': str(turnover.company.id), 'year': turnover.year}
+            details={'company_id': str(turnover.bidding_profile.company.id), 'year': turnover.year}
         )
 
 
@@ -419,8 +435,7 @@ class CompanyFinancialStatementViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return CompanyFinancialStatement.objects.filter(
-            company_id=self.kwargs['company_pk'],
-            company__deleted_at__isnull=True
+            bidding_profile__company_id=self.kwargs['company_pk']
         )
 
     def perform_create(self, serializer):
@@ -430,13 +445,12 @@ class CompanyFinancialStatementViewSet(viewsets.ModelViewSet):
             raise ValidationError("Unsupported file extension.")
         if file.size > MAX_FILE_SIZE:
             raise ValidationError("File too large.")
-        fs = serializer.save(
-            company=get_object_or_404(Company, id=self.kwargs['company_pk'], deleted_at__isnull=True)
-        )
+        bidding_profile = get_object_or_404(CompanyBiddingProfile, company_id=self.kwargs['company_pk'])
+        fs = serializer.save(bidding_profile=bidding_profile)
         AuditLog.objects.create(
             action='financial_statement_uploaded',
             user=self.request.user,
-            details={'company_id': str(fs.company.id), 'year': fs.year}
+            details={'company_id': str(fs.bidding_profile.company.id), 'year': fs.year}
         )
 
 
@@ -447,18 +461,16 @@ class CompanyLitigationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return CompanyLitigation.objects.filter(
-            company_id=self.kwargs['company_pk'],
-            company__deleted_at__isnull=True
+            bidding_profile__company_id=self.kwargs['company_pk']
         )
 
     def perform_create(self, serializer):
-        lit = serializer.save(
-            company=get_object_or_404(Company, id=self.kwargs['company_pk'], deleted_at__isnull=True)
-        )
+        bidding_profile = get_object_or_404(CompanyBiddingProfile, company_id=self.kwargs['company_pk'])
+        lit = serializer.save(bidding_profile=bidding_profile)
         AuditLog.objects.create(
             action='litigation_recorded',
             user=self.request.user,
-            details={'company_id': str(lit.company.id), 'litigation_id': lit.id}
+            details={'company_id': str(lit.bidding_profile.company.id), 'litigation_id': lit.id}
         )
 
 
@@ -473,21 +485,18 @@ class CompanyPersonnelViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return CompanyPersonnel.objects.filter(
-            company_id=self.kwargs['company_pk'],
-            company__deleted_at__isnull=True
+            bidding_profile__company_id=self.kwargs['company_pk']
         )
 
     @transaction.atomic
     def perform_create(self, serializer):
-        company = get_object_or_404(
-            Company, id=self.kwargs['company_pk'], deleted_at__isnull=True
-        )
-        pers = serializer.save(company=company)
+        bidding_profile = get_object_or_404(CompanyBiddingProfile, company_id=self.kwargs['company_pk'])
+        pers = serializer.save(bidding_profile=bidding_profile)
         AuditLog.objects.create(
             action='personnel_added',
             user=self.request.user,
             details={
-                'company_id': str(company.id),
+                'company_id': str(pers.bidding_profile.company.id),
                 'personnel_uuid': str(pers.uuid),
                 'name': f"{pers.first_name} {pers.last_name}"
             }
@@ -503,7 +512,7 @@ class CompanyPersonnelViewSet(viewsets.ModelViewSet):
             action='personnel_updated',
             user=self.request.user,
             details={
-                'company_id': str(pers.company.id),
+                'company_id': str(pers.bidding_profile.company.id),
                 'personnel_uuid': str(pers.uuid),
             }
         )
@@ -513,7 +522,7 @@ class CompanyPersonnelViewSet(viewsets.ModelViewSet):
                 action='personnel_verified',
                 user=self.request.user,
                 details={
-                    'company_id': str(pers.company.id),
+                    'company_id': str(pers.bidding_profile.company.id),
                     'personnel_uuid': str(pers.uuid),
                 }
             )
@@ -522,7 +531,7 @@ class CompanyPersonnelViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         # capture details before delete
         details = {
-            'company_id': str(instance.company.id),
+            'company_id': str(instance.bidding_profile.company.id),
             'personnel_uuid': str(instance.uuid),
             'name': f"{instance.first_name} {instance.last_name}"
         }
@@ -539,7 +548,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     Read-only audit logs for admins.
     """
     queryset = AuditLog.objects.select_related('user').all()
-    serializer_class = None  # set your AuditLogSerializer
+    serializer_class = AuditLogSerializer  # UPDATED: Set to actual serializer
     permission_classes = [permissions.IsAdminUser]
 
 

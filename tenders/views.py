@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.conf import settings
+from datetime import datetime  # NEW: For parsing dates in re-advertise
 
 from .models import (
     Category, SubCategory, ProcurementProcess, AgencyDetails,
@@ -80,6 +81,7 @@ class TenderViewSet(viewsets.ModelViewSet):
       - GET/POST    /tenders/{slug}/technical-specifications/  # NEW
       - POST        /tenders/{slug}/publish/
       - PATCH       /tenders/{slug}/status/
+      - POST        /tenders/{slug}/re-advertise/  # NEW
     """
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
@@ -134,6 +136,32 @@ class TenderViewSet(viewsets.ModelViewSet):
             tender.publication_date = timezone.now()
         tender.save()
         return Response({'detail': 'Status updated.', 'status': tender.status})
+
+    # NEW: Action for re-advertising the tender
+    @action(detail=True, methods=['post'], url_path='re-advertise')
+    def re_advertise_action(self, request, slug=None):
+        tender = self.get_object()
+        data = request.data
+        try:
+            new_submission_deadline = datetime.fromisoformat(data['new_submission_deadline'])
+            new_publication_date = datetime.fromisoformat(data.get('new_publication_date')) if data.get('new_publication_date') else None
+            new_clarification_deadline = datetime.fromisoformat(data.get('new_clarification_deadline')) if data.get('new_clarification_deadline') else None
+            new_evaluation_start_date = datetime.fromisoformat(data.get('new_evaluation_start_date')) if data.get('new_evaluation_start_date') else None
+            new_evaluation_end_date = datetime.fromisoformat(data.get('new_evaluation_end_date')) if data.get('new_evaluation_end_date') else None
+
+            new_tender = tender.re_advertise(
+                new_submission_deadline=new_submission_deadline,
+                new_publication_date=new_publication_date,
+                new_clarification_deadline=new_clarification_deadline,
+                new_evaluation_start_date=new_evaluation_start_date,
+                new_evaluation_end_date=new_evaluation_end_date
+            )
+            serializer = self.get_serializer(new_tender)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except KeyError:
+            return Response({'detail': 'new_submission_deadline is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
     def _nested_list_create(self, request, serializer_class, related_name):
         tender = self.get_object()

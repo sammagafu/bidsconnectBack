@@ -12,7 +12,8 @@ from bids.serializers import BidSerializer
 
 from .models import (
     CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument,
-    CompanyOffice, CompanyCertification, CompanySourceOfFund,
+    CompanyOffice, CompanyCertification, CompanyBiddingProfile,  # NEW: Import new model
+    CompanySourceOfFund,
     CompanyAnnualTurnover, CompanyFinancialStatement,
     CompanyLitigation, CompanyPersonnel, AuditLog
 )
@@ -228,6 +229,20 @@ class CompanyPersonnelSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'uuid', 'verified_at', 'created_at', 'updated_at']
 
 
+# NEW: Serializer for CompanyBiddingProfile (moved after dependencies)
+class CompanyBiddingProfileSerializer(serializers.ModelSerializer):
+    sources_of_funds = CompanySourceOfFundSerializer(many=True, read_only=True)
+    annual_turnovers = CompanyAnnualTurnoverSerializer(many=True, read_only=True)
+    financial_statements = CompanyFinancialStatementSerializer(many=True, read_only=True)
+    litigations = CompanyLitigationSerializer(many=True, read_only=True)
+    personnel = CompanyPersonnelSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CompanyBiddingProfile
+        fields = ['id', 'created_at', 'updated_at', 'sources_of_funds', 'annual_turnovers', 'financial_statements', 'litigations', 'personnel']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
 class TenderSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Tender
@@ -251,11 +266,7 @@ class CompanySerializer(serializers.ModelSerializer):
     documents            = CompanyDocumentSerializer(many=True,  read_only=True)
     offices              = CompanyOfficeSerializer(many=True,    read_only=True)
     certifications       = CompanyCertificationSerializer(many=True, read_only=True)
-    sources_of_funds     = CompanySourceOfFundSerializer(many=True, read_only=True)
-    annual_turnovers     = CompanyAnnualTurnoverSerializer(many=True, read_only=True)
-    financial_statements = CompanyFinancialStatementSerializer(many=True, read_only=True)
-    litigations          = CompanyLitigationSerializer(many=True,   read_only=True)
-    personnel            = CompanyPersonnelSerializer(many=True,   read_only=True)
+    bidding_profile      = CompanyBiddingProfileSerializer(read_only=True)  # NEW: Nest bidding profile
     bids                 = CompanyBidSerializer(many=True,          read_only=True, source='company_bids')
 
     class Meta:
@@ -270,16 +281,12 @@ class CompanySerializer(serializers.ModelSerializer):
 
             # include all nested relations:
             'company_users','invitations','documents','offices',
-            'certifications','sources_of_funds','annual_turnovers',
-            'financial_statements','litigations',
-            'personnel','bids',
+            'certifications','bidding_profile','bids',  # UPDATED: Removed direct bidding nests, added bidding_profile
         )
         read_only_fields = (
             'deleted_at','created_at','updated_at',
             'company_users','invitations','documents','offices',
-            'certifications','sources_of_funds','annual_turnovers',
-            'financial_statements','litigations',
-            'personnel','bids',
+            'certifications','bidding_profile','bids',  # UPDATED
         )
 
     def get_owner_email(self, obj):

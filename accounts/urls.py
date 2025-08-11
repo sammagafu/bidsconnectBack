@@ -9,6 +9,7 @@ from .views import (
     CompanyDocumentViewSet,
     CompanyOfficeViewSet,
     CompanyCertificationViewSet,
+    CompanyBiddingProfileViewSet,  # NEW: Import new ViewSet
     CompanySourceOfFundViewSet,
     CompanyAnnualTurnoverViewSet,
     CompanyFinancialStatementViewSet,
@@ -53,6 +54,12 @@ router.register(
     r'companies/(?P<company_pk>[^/.]+)/certifications',
     CompanyCertificationViewSet,
     basename='company-certifications'
+)
+# NEW: Nested for bidding profile
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/bidding-profile',
+    CompanyBiddingProfileViewSet,
+    basename='company-bidding-profile'
 )
 router.register(
     r'companies/(?P<company_pk>[^/.]+)/sources-of-fund',
