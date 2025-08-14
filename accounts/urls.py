@@ -9,17 +9,17 @@ from .views import (
     CompanyDocumentViewSet,
     CompanyOfficeViewSet,
     CompanyCertificationViewSet,
-    CompanyBiddingProfileViewSet,  # NEW: Import new ViewSet
     CompanySourceOfFundViewSet,
     CompanyAnnualTurnoverViewSet,
     CompanyFinancialStatementViewSet,
     CompanyLitigationViewSet,
     CompanyPersonnelViewSet,
+    CompanyExperienceViewSet,
     AuditLogViewSet,
-    InvitationAcceptanceView,
     CompanyDocumentCSVExportView,
     DocumentExpiryWebhookView,
     CompanyDashboardView,
+    InvitationAcceptanceView,
 )
 
 app_name = 'accounts'
@@ -55,14 +55,8 @@ router.register(
     CompanyCertificationViewSet,
     basename='company-certifications'
 )
-# NEW: Nested for bidding profile
 router.register(
-    r'companies/(?P<company_pk>[^/.]+)/bidding-profile',
-    CompanyBiddingProfileViewSet,
-    basename='company-bidding-profile'
-)
-router.register(
-    r'companies/(?P<company_pk>[^/.]+)/sources-of-fund',
+    r'companies/(?P<company_pk>[^/.]+)/sources-of-funds',
     CompanySourceOfFundViewSet,
     basename='company-sources-of-fund'
 )
@@ -81,11 +75,15 @@ router.register(
     CompanyLitigationViewSet,
     basename='company-litigations'
 )
-
 router.register(
     r'companies/(?P<company_pk>[^/.]+)/personnel',
     CompanyPersonnelViewSet,
     basename='company-personnel'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/experiences',
+    CompanyExperienceViewSet,
+    basename='company-experiences'
 )
 
 urlpatterns = router.urls + [

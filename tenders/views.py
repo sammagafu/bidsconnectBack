@@ -1,12 +1,10 @@
-# tenders/views.py
-
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.conf import settings
-from datetime import datetime  # NEW: For parsing dates in re-advertise
+from datetime import datetime
 
 from .models import (
     Category, SubCategory, ProcurementProcess, AgencyDetails,
@@ -15,7 +13,7 @@ from .models import (
     TenderPersonnelRequirement, TenderScheduleItem,
     TenderSubscription, NotificationPreference,
     TenderNotification, TenderStatusHistory,
-    TenderTechnicalSpecification,  # NEW: Import new model
+    TenderTechnicalSpecification,
 )
 from .serializers import (
     CategorySerializer, SubCategorySerializer, CategoryWithSubcategoriesSerializer,
@@ -25,23 +23,18 @@ from .serializers import (
     TenderPersonnelRequirementSerializer, TenderScheduleItemSerializer,
     TenderSubscriptionSerializer, NotificationPreferenceSerializer,
     TenderNotificationSerializer, TenderStatusHistorySerializer,
-    TenderTechnicalSpecificationSerializer,  # NEW: Import new serializer
+    TenderTechnicalSpecificationSerializer,
 )
-
-
-# ─── Category & SubCategory ────────────────────────────────────────────────────
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [permissions.IsAuthenticated]
 
-
 class SubCategoryViewSet(viewsets.ModelViewSet):
     queryset = SubCategory.objects.all()
     serializer_class = SubCategorySerializer
     permission_classes = [permissions.IsAuthenticated]
-
 
 class CategoryWithSubcategoriesViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.prefetch_related('subcategories').all()
@@ -49,25 +42,16 @@ class CategoryWithSubcategoriesViewSet(viewsets.ModelViewSet):
     lookup_field = 'slug'
     permission_classes = [permissions.IsAuthenticated]
 
-
-# ─── Procurement Process ───────────────────────────────────────────────────────
-
 class ProcurementProcessViewSet(viewsets.ModelViewSet):
     queryset = ProcurementProcess.objects.all()
     serializer_class = ProcurementProcessSerializer
     permission_classes = [permissions.IsAuthenticated]
-
-
-# ─── Agency Details ──────────────────────────────────────────────────────────
 
 class AgencyDetailsViewSet(viewsets.ModelViewSet):
     queryset = AgencyDetails.objects.all()
     serializer_class = AgencyDetailsSerializer
     lookup_field = 'slug'
     permission_classes = [permissions.IsAuthenticated]
-
-
-# ─── Tender & Nested Endpoints ─────────────────────────────────────────────────
 
 class TenderViewSet(viewsets.ModelViewSet):
     """
@@ -78,12 +62,18 @@ class TenderViewSet(viewsets.ModelViewSet):
       - GET/POST    /tenders/{slug}/experience-requirements/
       - GET/POST    /tenders/{slug}/personnel-requirements/
       - GET/POST    /tenders/{slug}/schedule-items/
-      - GET/POST    /tenders/{slug}/technical-specifications/  # NEW
+      - GET/POST    /tenders/{slug}/technical-specifications/
       - POST        /tenders/{slug}/publish/
       - PATCH       /tenders/{slug}/status/
-      - POST        /tenders/{slug}/re-advertise/  # NEW
+      - POST        /tenders/{slug}/re-advertise/
     """
-    queryset = Tender.objects.all()
+    queryset = Tender.objects.select_related(
+        'category', 'subcategory', 'procurement_process', 'agency', 'created_by'
+    ).prefetch_related(
+        'required_documents', 'financial_requirements', 'turnover_requirements',
+        'experience_requirements', 'personnel_requirements', 'schedule_items',
+        'technical_specifications'
+    ).all()
     serializer_class = TenderSerializer
     lookup_field = 'slug'
     permission_classes = [permissions.IsAuthenticated]
@@ -132,53 +122,63 @@ class TenderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         tender.status = new_status
-        if new_status == 'published' and not tender.publication_date:
-            tender.publication_date = timezone.now()
         tender.save()
-        return Response({'detail': 'Status updated.', 'status': tender.status})
+        TenderStatusHistory.objects.create(
+            tender=tender,
+            status=new_status,
+            changed_by=self.request.user
+        )
+        return Response({'detail': f'Status updated to {new_status}.'})
 
-    # NEW: Action for re-advertising the tender
     @action(detail=True, methods=['post'], url_path='re-advertise')
-    def re_advertise_action(self, request, slug=None):
+    def re_advertise(self, request, slug=None):
         tender = self.get_object()
-        data = request.data
-        try:
-            new_submission_deadline = datetime.fromisoformat(data['new_submission_deadline'])
-            new_publication_date = datetime.fromisoformat(data.get('new_publication_date')) if data.get('new_publication_date') else None
-            new_clarification_deadline = datetime.fromisoformat(data.get('new_clarification_deadline')) if data.get('new_clarification_deadline') else None
-            new_evaluation_start_date = datetime.fromisoformat(data.get('new_evaluation_start_date')) if data.get('new_evaluation_start_date') else None
-            new_evaluation_end_date = datetime.fromisoformat(data.get('new_evaluation_end_date')) if data.get('new_evaluation_end_date') else None
-
-            new_tender = tender.re_advertise(
-                new_submission_deadline=new_submission_deadline,
-                new_publication_date=new_publication_date,
-                new_clarification_deadline=new_clarification_deadline,
-                new_evaluation_start_date=new_evaluation_start_date,
-                new_evaluation_end_date=new_evaluation_end_date
+        if tender.status not in ['closed', 'cancelled']:
+            return Response(
+                {'detail': 'Tender must be closed or cancelled to re-advertise.'},
+                status=status.HTTP_400_BAD_REQUEST
             )
-            serializer = self.get_serializer(new_tender)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        except ValueError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except KeyError:
-            return Response({'detail': 'new_submission_deadline is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        new_tender = Tender.objects.create(
+            title=tender.title,
+            reference_number=f"{tender.reference_number}-R{tender.re_advertisement_count + 1}",
+            tenderdescription=tender.tenderdescription,
+            category=tender.category,
+            subcategory=tender.subcategory,
+            procurement_process=tender.procurement_process,
+            agency=tender.agency,
+            tender_type_country=tender.tender_type_country,
+            tender_type_sector=tender.tender_type_sector,
+            currency=tender.currency,
+            tender_fees=tender.tender_fees,
+            source_of_funds=tender.source_of_funds,
+            re_advertisement_count=tender.re_advertisement_count + 1,
+            publication_date=datetime.strptime(request.data.get('publication_date'), '%Y-%m-%d').date() if request.data.get('publication_date') else timezone.now(),
+            submission_deadline=datetime.strptime(request.data.get('submission_deadline'), '%Y-%m-%d').date() if request.data.get('submission_deadline') else None,
+            validity_period_days=tender.validity_period_days,
+            completion_period_days=tender.completion_period_days,
+            allow_alternative_delivery=tender.allow_alternative_delivery,
+            litigation_history_start=tender.litigation_history_start,
+            litigation_history_end=tender.litigation_history_end,
+            tender_document=tender.tender_document,
+            tender_securing_type=tender.tender_securing_type,
+            tender_security_percentage=tender.tender_security_percentage,
+            tender_security_amount=tender.tender_security_amount,
+            tender_security_currency=tender.tender_security_currency,
+            created_by=self.request.user
+        )
+        return Response(TenderSerializer(new_tender).data)
 
-    def _nested_list_create(self, request, serializer_class, related_name):
+    def _nested_list_create(self, request, serializer_class, related_field):
         tender = self.get_object()
         if request.method == 'GET':
-            qs = getattr(tender, related_name).all()
-            page = self.paginate_queryset(qs)
-            ser = serializer_class(page or qs, many=True)
-            return (
-                self.get_paginated_response(ser.data)
-                if page is not None else
-                Response(ser.data)
-            )
-        ser = serializer_class(data=request.data)
-        if ser.is_valid():
-            ser.save(tender=tender)
-            return Response(ser.data, status=status.HTTP_201_CREATED)
-        return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+            queryset = getattr(tender, related_field).all()
+            serializer = serializer_class(queryset, many=True)
+            return Response(serializer.data)
+        elif request.method == 'POST':
+            serializer = serializer_class(data=request.data, many=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(tender=tender)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get', 'post'], url_path='required-documents')
     def required_documents(self, request, slug=None):
@@ -228,7 +228,7 @@ class TenderViewSet(viewsets.ModelViewSet):
             'schedule_items'
         )
 
-    @action(detail=True, methods=['get', 'post'], url_path='technical-specifications')  # NEW: Nested endpoint
+    @action(detail=True, methods=['get', 'post'], url_path='technical-specifications')
     def technical_specifications(self, request, slug=None):
         return self._nested_list_create(
             request,
@@ -236,52 +236,40 @@ class TenderViewSet(viewsets.ModelViewSet):
             'technical_specifications'
         )
 
-
-# ─── Flat CRUD on each child type ────────────────────────────────────────────────
-
 class TenderRequiredDocumentViewSet(viewsets.ModelViewSet):
     queryset = TenderRequiredDocument.objects.all()
     serializer_class = TenderRequiredDocumentSerializer
     permission_classes = [permissions.IsAuthenticated]
-
 
 class TenderFinancialRequirementViewSet(viewsets.ModelViewSet):
     queryset = TenderFinancialRequirement.objects.all()
     serializer_class = TenderFinancialRequirementSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-
 class TenderTurnoverRequirementViewSet(viewsets.ModelViewSet):
     queryset = TenderTurnoverRequirement.objects.all()
     serializer_class = TenderTurnoverRequirementSerializer
     permission_classes = [permissions.IsAuthenticated]
-
 
 class TenderExperienceRequirementViewSet(viewsets.ModelViewSet):
     queryset = TenderExperienceRequirement.objects.all()
     serializer_class = TenderExperienceRequirementSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-
 class TenderPersonnelRequirementViewSet(viewsets.ModelViewSet):
     queryset = TenderPersonnelRequirement.objects.all()
     serializer_class = TenderPersonnelRequirementSerializer
     permission_classes = [permissions.IsAuthenticated]
-
 
 class TenderScheduleItemViewSet(viewsets.ModelViewSet):
     queryset = TenderScheduleItem.objects.all()
     serializer_class = TenderScheduleItemSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-# NEW: Flat CRUD for new model if needed
 class TenderTechnicalSpecificationViewSet(viewsets.ModelViewSet):
     queryset = TenderTechnicalSpecification.objects.all()
     serializer_class = TenderTechnicalSpecificationSerializer
     permission_classes = [permissions.IsAuthenticated]
-
-
-# ─── Subscriptions & Notifications ─────────────────────────────────────────────
 
 class TenderSubscriptionViewSet(viewsets.ModelViewSet):
     queryset = TenderSubscription.objects.all()
@@ -316,7 +304,6 @@ class TenderSubscriptionViewSet(viewsets.ModelViewSet):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'detail': 'Not subscribed'}, status=status.HTTP_400_BAD_REQUEST)
 
-
 class NotificationPreferenceViewSet(viewsets.ModelViewSet):
     queryset = NotificationPreference.objects.all()
     serializer_class = NotificationPreferenceSerializer
@@ -328,7 +315,6 @@ class NotificationPreferenceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return self.queryset.filter(user=self.request.user)
 
-
 class TenderNotificationViewSet(viewsets.ModelViewSet):
     queryset = TenderNotification.objects.all()
     serializer_class = TenderNotificationSerializer
@@ -336,7 +322,6 @@ class TenderNotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return self.queryset.filter(subscription__user=self.request.user)
-
 
 class TenderStatusHistoryViewSet(viewsets.ModelViewSet):
     queryset = TenderStatusHistory.objects.all()

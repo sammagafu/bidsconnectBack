@@ -1,8 +1,8 @@
 # accounts/admin.py
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.utils import timezone
 from .models import CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument, AuditLog
-from .constants import DOCUMENT_EXPIRY_NOTIFICATION_DAYS
 
 # CustomUser Admin
 class CustomUserAdmin(BaseUserAdmin):
@@ -36,7 +36,7 @@ class CompanyAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {'fields': ('name', 'slug', 'owner', 'created_by')}),
-        ('Details', {'fields': ('description', 'industry', 'website', 'logo', 'email', 'phone_number', 'address')}),
+        ('Details', {'fields': ('description', 'industry', 'website', 'logo')}),
         ('Legal', {'fields': ('tax_id', 'registration_number', 'founded_date', 'country')}),
         ('Operational', {'fields': ('status', 'employee_count', 'parent_company')}),
         ('Metadata', {'fields': ('created_at', 'updated_at', 'deleted_at')}),
@@ -46,12 +46,12 @@ class CompanyAdmin(admin.ModelAdmin):
 # CompanyUser Admin
 @admin.register(CompanyUser)
 class CompanyUserAdmin(admin.ModelAdmin):
-    list_display = ('company', 'user', 'role', 'created_at')
-    list_filter = ('role', 'created_at')
+    list_display = ('company', 'user', 'role', 'joined_at')
+    list_filter = ('role', 'joined_at')
     search_fields = ('company__name', 'user__email')
     raw_id_fields = ('company', 'user')
-    date_hierarchy = 'created_at'
-    ordering = ('-created_at',)
+    date_hierarchy = 'joined_at'
+    ordering = ('-joined_at',)
 
 # CompanyInvitation Admin
 @admin.register(CompanyInvitation)
@@ -73,42 +73,37 @@ class CompanyInvitationAdmin(admin.ModelAdmin):
 @admin.register(CompanyDocument)
 class CompanyDocumentAdmin(admin.ModelAdmin):
     list_display = (
-        'company', 'document_type', 'document_category', 
-        'uploaded_by', 'uploaded_at', 'expires_at', 
-        'is_expired', 'get_notification_status'
+        'company', 'document_type', 'category', 
+        'uploaded_by', 'uploaded_at', 'expiry_date', 
+        'is_expired'
     )
     list_filter = (
-        'document_type', 'document_category', 
-        'is_expired', 'uploaded_at'
+        'document_type', 'category', 
+        'uploaded_at'
     )
     search_fields = ('company__name', 'uploaded_by__email')
     raw_id_fields = ('company', 'uploaded_by')
     date_hierarchy = 'uploaded_at'
     ordering = ('-uploaded_at',)
 
-    def get_notification_status(self, obj):
-        status = []
-        for days in DOCUMENT_EXPIRY_NOTIFICATION_DAYS:
-            str_days = str(days)
-            sent = obj.notification_sent.get(str_days, False)
-            attempts = obj.notification_attempts.get(str_days, 0)
-            status.append(f"{days}d: {'Sent' if sent else f'Pending ({attempts})'}")
-        return ", ".join(status)
-    get_notification_status.short_description = "Notification Status"
+    def is_expired(self, obj):
+        if not obj.expiry_date:
+            return False
+        return obj.expiry_date < timezone.now().date()
+    is_expired.boolean = True
+    is_expired.short_description = "Is Expired"
 
     fieldsets = (
-        (None, {'fields': ('company', 'document_type', 'document_category', 'document_file')}),
+        (None, {'fields': ('company', 'document_type', 'category', 'file')}),
         ('Metadata', {
             'fields': (
                 'uploaded_by', 'uploaded_at', 
-                'expires_at', 'is_expired',
-                'notification_sent', 'notification_attempts'
+                'expiry_date', 'is_verified'
             )
         }),
     )
     readonly_fields = (
-        'uploaded_at', 'is_expired', 
-        'notification_sent', 'notification_attempts'
+        'uploaded_at',
     )
 
 # AuditLog Admin

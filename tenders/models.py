@@ -9,6 +9,7 @@ from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.conf import settings
 from django.db.models import Avg, Sum
+from decimal import Decimal
 
 
 class Category(models.Model):
@@ -179,10 +180,10 @@ class Tender(models.Model):
     litigation_history_start = models.DateField(null=True, blank=True)
     litigation_history_end = models.DateField(null=True, blank=True)
     tender_document = models.FileField(upload_to='tender_docs/%Y/%m/', blank=True, null=True)
-    tender_fees = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    tender_fees = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), validators=[MinValueValidator(Decimal('0'))])
     tender_securing_type = models.CharField(max_length=30, choices=TenderSecurityType, default="Tender Securing Declaration")
-    tender_security_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    tender_security_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    tender_security_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))])
+    tender_security_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])
     tender_security_currency = models.CharField(max_length=3, choices=CurrencyTYpes, default='TZS')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
     last_status_change = models.DateTimeField(auto_now=True)
@@ -195,7 +196,6 @@ class Tender(models.Model):
     allow_alternative_delivery = models.BooleanField(default=False, help_text="Whether bidders can propose alternative delivery schedules")
 
     # NEW: Fields added to address gaps from tender doc and checklis
-
     source_of_funds = models.CharField(max_length=20, choices=SOURCE_OF_FUNDS_CHOICES, default='government')  # From tender doc
 
     # NEW: For re-advertisement
@@ -430,9 +430,9 @@ class TenderFinancialRequirement(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='financial_requirements')
     name = models.CharField(max_length=100, help_text="e.g., Current Ratio")
     formula = models.CharField(max_length=255, blank=True, help_text="e.g., CA/CL")
-    minimum = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    minimum = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])
     unit = models.CharField(max_length=50, blank=True, help_text="e.g., Ratio, %")
-    actual_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # For evaluation
+    actual_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])  # For evaluation
     complied = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
     jv_compliance = models.CharField(max_length=20, choices=JV_COMPLIANCE_CHOICES, default='combined', blank=True)
@@ -454,7 +454,7 @@ class TenderFinancialRequirement(models.Model):
 class TenderTurnoverRequirement(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='turnover_requirements')
     label = models.CharField(max_length=100, default="Average Annual Turnover")
-    amount = models.DecimalField(max_digits=18, decimal_places=2, validators=[MinValueValidator(0)])
+    amount = models.DecimalField(max_digits=18, decimal_places=2, validators=[MinValueValidator(Decimal('0'))])
     currency = models.CharField(max_length=3, choices=Tender.CurrencyTYpes, default='TZS')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
@@ -462,7 +462,7 @@ class TenderTurnoverRequirement(models.Model):
 
     # NEW: JV compliance rules (similar to above)
     jv_compliance = models.CharField(max_length=20, choices=TenderFinancialRequirement.JV_COMPLIANCE_CHOICES, default='combined', blank=True)
-    jv_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    jv_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))])
 
     def __str__(self):
         return f"Turnover Req for {self.tender.reference_number}"
@@ -477,7 +477,7 @@ class TenderExperienceRequirement(models.Model):
     type = models.CharField(max_length=20, choices=EXPERIENCE_TYPES, default='specific')
     description = models.TextField(blank=True)
     contract_count = models.PositiveIntegerField(default=1)
-    min_value = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
+    min_value = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])
     currency = models.CharField(max_length=3, choices=Tender.CurrencyTYpes, default='TZS')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
@@ -488,7 +488,7 @@ class TenderExperienceRequirement(models.Model):
 
     # NEW: JV compliance rules
     jv_compliance = models.CharField(max_length=20, choices=TenderFinancialRequirement.JV_COMPLIANCE_CHOICES, default='combined', blank=True)
-    jv_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    jv_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))])
     jv_aggregation_note = models.TextField(blank=True, help_text="Notes on aggregation for JV, e.g., no aggregation for value")
 
     def __str__(self):
