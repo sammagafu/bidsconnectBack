@@ -1,3 +1,4 @@
+# tenders/models.py
 from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -190,6 +191,7 @@ class Tender(models.Model):
     version = models.PositiveIntegerField(default=1)
     created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='created_tenders')
     created_at = models.DateTimeField(auto_now_add=True)
+    awarded_bid = models.ForeignKey('bids.Bid', on_delete=models.SET_NULL, null=True, blank=True, related_name='awarded_tenders')
     updated_at = models.DateTimeField(auto_now=True)
 
     # NEW: Flag for allowing alternative delivery schedules
@@ -197,10 +199,6 @@ class Tender(models.Model):
 
     # NEW: Fields added to address gaps from tender doc and checklis
     source_of_funds = models.CharField(max_length=20, choices=SOURCE_OF_FUNDS_CHOICES, default='government')  # From tender doc
-
-    # NEW: For re-advertisement
-    re_advertised_from = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='re_advertisements')
-    re_advertisement_count = models.PositiveIntegerField(default=0, help_text="Number of times this tender has been re-advertised")
 
     class Meta:
         ordering = ['-created_at']
@@ -259,131 +257,6 @@ class Tender(models.Model):
             raise ValueError("Security percentage or amount required for Tender Security type.")
         return True
 
-    # NEW: Method to re-advertise the tender
-    def re_advertise(self, new_submission_deadline, new_publication_date=None, new_clarification_deadline=None, new_evaluation_start_date=None, new_evaluation_end_date=None):
-        if self.status not in ['closed', 'canceled']:
-            raise ValueError("Only closed or canceled tenders can be re-advertised.")
-        if timezone.now() <= self.submission_deadline:
-            raise ValueError("Tender is not expired yet.")
-
-        # Create a new tender copy
-        new_tender = Tender(
-            title=self.title + " (Re-advertised)",
-            reference_number=self.reference_number + "-RE",
-            tender_type_country=self.tender_type_country,
-            tender_type_sector=self.tender_type_sector,
-            currency=self.currency,
-            category=self.category,
-            subcategory=self.subcategory,
-            procurement_process=self.procurement_process,
-            agency=self.agency,
-            description=self.description,
-            publication_date=new_publication_date or timezone.now(),
-            submission_deadline=new_submission_deadline,
-            validity_period_days=self.validity_period_days,
-            completion_period_days=self.completion_period_days,
-            litigation_history_start=self.litigation_history_start,
-            litigation_history_end=self.litigation_history_end,
-            tender_document=self.tender_document,
-            tender_fees=self.tender_fees,
-            tender_securing_type=self.tender_securing_type,
-            tender_security_percentage=self.tender_security_percentage,
-            tender_security_amount=self.tender_security_amount,
-            tender_security_currency=self.tender_security_currency,
-            status="published",
-            version=self.version + 1,
-            created_by=self.created_by,
-            allow_alternative_delivery=self.allow_alternative_delivery,
-            source_of_funds=self.source_of_funds,
-            re_advertised_from=self,
-            re_advertisement_count=self.re_advertisement_count + 1
-        )
-        new_tender.save()
-
-        # Copy related objects
-        for doc in self.required_documents.all():
-            TenderRequiredDocument.objects.create(
-                tender=new_tender,
-                name=doc.name,
-                description=doc.description,
-                document_type=doc.document_type
-            )
-        for fin_req in self.financial_requirements.all():
-            TenderFinancialRequirement.objects.create(
-                tender=new_tender,
-                name=fin_req.name,
-                formula=fin_req.formula,
-                minimum=fin_req.minimum,
-                unit=fin_req.unit,
-                notes=fin_req.notes,
-                jv_compliance=fin_req.jv_compliance,
-                financial_sources=fin_req.financial_sources
-            )
-        for turnover in self.turnover_requirements.all():
-            TenderTurnoverRequirement.objects.create(
-                tender=new_tender,
-                label=turnover.label,
-                amount=turnover.amount,
-                currency=turnover.currency,
-                start_date=turnover.start_date,
-                end_date=turnover.end_date,
-                jv_compliance=turnover.jv_compliance,
-                jv_percentage=turnover.jv_percentage
-            )
-        for exp in self.experience_requirements.all():
-            TenderExperienceRequirement.objects.create(
-                tender=new_tender,
-                type=exp.type,
-                description=exp.description,
-                contract_count=exp.contract_count,
-                min_value=exp.min_value,
-                currency=exp.currency,
-                start_date=exp.start_date,
-                end_date=exp.end_date,
-                reputation_notes=exp.reputation_notes,
-                jv_compliance=exp.jv_compliance,
-                jv_percentage=exp.jv_percentage,
-                jv_aggregation_note=exp.jv_aggregation_note
-            )
-        for pers in self.personnel_requirements.all():
-            TenderPersonnelRequirement.objects.create(
-                tender=new_tender,
-                role=pers.role,
-                min_education=pers.min_education,
-                professional_registration=pers.professional_registration,
-                min_experience_yrs=pers.min_experience_yrs,
-                appointment_duration_years=pers.appointment_duration_years,
-                nationality_required=pers.nationality_required,
-                language_required=pers.language_required,
-                notes=pers.notes,
-                age_min=pers.age_min,
-                age_max=pers.age_max,
-                specialized_education=pers.specialized_education,
-                professional_certifications=pers.professional_certifications,
-                jv_compliance=pers.jv_compliance
-            )
-        for item in self.schedule_items.all():
-            TenderScheduleItem.objects.create(
-                tender=new_tender,
-                commodity=item.commodity,
-                code=item.code,
-                unit=item.unit,
-                quantity=item.quantity,
-                specification=item.specification
-            )
-        for tech in self.technical_specifications.all():
-            TenderTechnicalSpecification.objects.create(
-                tender=new_tender,
-                category=tech.category,
-                description=tech.description
-            )
-
-        # Send notifications for the new re-advertised tender
-        new_tender.send_notification_emails()
-
-        return new_tender
-
-
 class TenderTechnicalSpecification(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='technical_specifications')
     category = models.CharField(max_length=100, choices=[
@@ -400,7 +273,6 @@ class TenderTechnicalSpecification(models.Model):
 
     def __str__(self):
         return f"{self.get_category_display()} for {self.tender.reference_number}"
-
 
 class TenderRequiredDocument(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='required_documents')
@@ -420,7 +292,6 @@ class TenderRequiredDocument(models.Model):
 
     def __str__(self):
         return f"{self.name} for {self.tender.reference_number}"
-
 
 class TenderFinancialRequirement(models.Model):
     JV_COMPLIANCE_CHOICES = (
@@ -450,7 +321,6 @@ class TenderFinancialRequirement(models.Model):
         self.save()
         return self.complied
 
-
 class TenderTurnoverRequirement(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='turnover_requirements')
     label = models.CharField(max_length=100, default="Average Annual Turnover")
@@ -466,7 +336,6 @@ class TenderTurnoverRequirement(models.Model):
 
     def __str__(self):
         return f"Turnover Req for {self.tender.reference_number}"
-
 
 class TenderExperienceRequirement(models.Model):
     EXPERIENCE_TYPES = (
@@ -493,7 +362,6 @@ class TenderExperienceRequirement(models.Model):
 
     def __str__(self):
         return f"{self.get_type_display()} for {self.tender.reference_number}"
-
 
 class TenderPersonnelRequirement(models.Model):
     EDUCATION_LEVELS = (
@@ -531,7 +399,6 @@ class TenderPersonnelRequirement(models.Model):
         self.save()
         return self.complied
 
-
 class TenderScheduleItem(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='schedule_items')
     commodity = models.CharField(max_length=255)
@@ -542,7 +409,6 @@ class TenderScheduleItem(models.Model):
 
     def __str__(self):
         return f"{self.commodity} for {self.tender.reference_number}"
-
 
 class TenderSubscription(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='tender_subscriptions')
@@ -575,7 +441,6 @@ class TenderSubscription(models.Model):
             self.slug = slugify(base)
         super().save(*args, **kwargs)
 
-
 class NotificationPreference(models.Model):
     user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='notification_preference')
     email_notifications = models.BooleanField(default=True)
@@ -586,7 +451,6 @@ class NotificationPreference(models.Model):
 
     def __str__(self):
         return f"Prefs for {self.user.email}"
-
 
 class TenderNotification(models.Model):
     subscription = models.ForeignKey(TenderSubscription, on_delete=models.CASCADE, related_name='notifications')
@@ -602,7 +466,6 @@ class TenderNotification(models.Model):
     def __str__(self):
         return f"Notification to {self.subscription.user.email} for {self.tender.reference_number}"
 
-
 class TenderStatusHistory(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='status_history')
     status = models.CharField(max_length=20, choices=Tender.STATUS_CHOICES)
@@ -615,9 +478,19 @@ class TenderStatusHistory(models.Model):
     def __str__(self):
         return f"{self.tender.reference_number} -> {self.status} at {self.changed_at}"
 
-
 # Signals for notifications
 @receiver(post_save, sender=Tender)
 def create_tender_notifications(sender, instance, created, **kwargs):
     if instance.status == 'published':
         instance.send_notification_emails()
+
+class Award(models.Model):
+    tender = models.OneToOneField(Tender, on_delete=models.CASCADE, related_name='award')
+    awarded_bid = models.ForeignKey('bids.Bid', on_delete=models.SET_NULL, null=True, blank=True, related_name='awards')
+    awarded_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='awards_given')
+    awarded_date = models.DateTimeField(null=True, blank=True)
+    award_document = models.FileField(upload_to='awards/%Y/%m/', blank=True, null=True)
+    bid_report = models.FileField(upload_to='bid_reports/%Y/%m/', blank=True, null=True)
+
+    def __str__(self):
+        return f"Award for {self.tender.reference_number}"

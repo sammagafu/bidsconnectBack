@@ -104,7 +104,7 @@ class BidExperienceResponseAdmin(admin.ModelAdmin):
 
 @admin.register(BidPersonnelResponse)
 class BidPersonnelResponseAdmin(admin.ModelAdmin):
-    list_display = ['id', 'bid_id', 'personnel_requirement', 'personnel', 'complied', 'jv_contribution']
+    list_display = ['id', 'bid_id', 'personnel_requirement', 'get_personnels', 'complied', 'jv_contribution']
     list_filter = ['complied']
     search_fields = ['bid__slug', 'personnel_requirement__role']
 
@@ -112,9 +112,13 @@ class BidPersonnelResponseAdmin(admin.ModelAdmin):
         return obj.bid.id
     bid_id.short_description = 'Bid ID'
 
+    def get_personnels(self, obj):
+        return ", ".join([str(personnel) for personnel in obj.personnels.all()])
+    get_personnels.short_description = 'Personnels'
+
 @admin.register(BidOfficeResponse)
 class BidOfficeResponseAdmin(admin.ModelAdmin):
-    list_display = ['id', 'bid_id', 'tender_document', 'office']
+    list_display = ['id', 'bid_id', 'tender_document', 'company_office']
     search_fields = ['bid__slug', 'tender_document__name']
 
     def bid_id(self, obj):

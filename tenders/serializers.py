@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from decimal import Decimal
+from bids.models import Bid
 from .models import (
     Category, SubCategory, ProcurementProcess, AgencyDetails,
     Tender, TenderRequiredDocument,
@@ -7,7 +8,7 @@ from .models import (
     TenderExperienceRequirement, TenderPersonnelRequirement,
     TenderScheduleItem, TenderSubscription, NotificationPreference,
     TenderNotification, TenderStatusHistory,
-    TenderTechnicalSpecification
+    TenderTechnicalSpecification, Award
 )
 
 class SubCategorySerializer(serializers.ModelSerializer):
@@ -151,7 +152,6 @@ class TenderSerializer(serializers.ModelSerializer):
     subcategory = SubCategorySerializer(read_only=True, allow_null=True)
     procurement_process = ProcurementProcessSerializer(read_only=True, allow_null=True)
     agency = AgencyDetailsSerializer(read_only=True, allow_null=True)
-    re_advertised_from = serializers.PrimaryKeyRelatedField(read_only=True)
     required_documents = TenderRequiredDocumentSerializer(many=True, required=False)
     financial_requirements = TenderFinancialRequirementSerializer(many=True, required=False)
     turnover_requirements = TenderTurnoverRequirementSerializer(many=True, required=False)
@@ -159,6 +159,7 @@ class TenderSerializer(serializers.ModelSerializer):
     personnel_requirements = TenderPersonnelRequirementSerializer(many=True, required=False)
     schedule_items = TenderScheduleItemSerializer(many=True, required=False)
     technical_specifications = TenderTechnicalSpecificationSerializer(many=True, required=False)
+    awarded_bid = serializers.PrimaryKeyRelatedField(read_only=True)
 
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(), source='category', write_only=True, allow_null=True
@@ -172,8 +173,8 @@ class TenderSerializer(serializers.ModelSerializer):
     agency_id = serializers.PrimaryKeyRelatedField(
         queryset=AgencyDetails.objects.all(), source='agency', write_only=True, allow_null=True
     )
-    re_advertised_from_id = serializers.PrimaryKeyRelatedField(
-        queryset=Tender.objects.all(), source='re_advertised_from', write_only=True, allow_null=True
+    awarded_bid_id = serializers.PrimaryKeyRelatedField(
+        queryset=Bid.objects.all(), source='awarded_bid', write_only=True, allow_null=True, required=False
     )
 
     class Meta:
@@ -183,13 +184,13 @@ class TenderSerializer(serializers.ModelSerializer):
             'category', 'category_id', 'subcategory', 'subcategory_id',
             'procurement_process', 'procurement_process_id', 'agency', 'agency_id',
             'status', 'tender_type_country', 'tender_type_sector', 'currency',
-            'tender_fees', 'source_of_funds', 're_advertisement_count',
-            're_advertised_from', 're_advertised_from_id', 'publication_date',
+            'tender_fees', 'source_of_funds', 'publication_date',
             'submission_deadline', 'validity_period_days', 'completion_period_days',
             'allow_alternative_delivery', 'litigation_history_start', 'litigation_history_end',
             'tender_document', 'tender_securing_type', 'tender_security_percentage',
             'tender_security_amount', 'tender_security_currency', 'version',
             'created_by', 'created_at', 'updated_at', 'last_status_change',
+            'awarded_bid', 'awarded_bid_id',
             'required_documents', 'financial_requirements', 'turnover_requirements',
             'experience_requirements', 'personnel_requirements', 'schedule_items',
             'technical_specifications'
@@ -310,3 +311,9 @@ class TenderStatusHistorySerializer(serializers.ModelSerializer):
         model = TenderStatusHistory
         fields = ['id', 'tender', 'status', 'changed_at', 'changed_by']
         read_only_fields = ['id', 'changed_at', 'changed_by']
+
+class AwardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Award
+        fields = ['id', 'tender', 'awarded_bid', 'awarded_by', 'awarded_date', 'award_document', 'bid_report']
+        read_only_fields = ['id']

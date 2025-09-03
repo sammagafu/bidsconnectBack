@@ -2,10 +2,11 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.http import FileResponse
 from .models import (
     Bid, BidDocument, BidFinancialResponse, BidTurnoverResponse,
     BidExperienceResponse, BidPersonnelResponse, BidOfficeResponse,
@@ -21,6 +22,13 @@ from .serializers import (
     BidEvaluationSerializer, BidAuditLogSerializer
 )
 from tenders.models import Tender
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from io import BytesIO
+import logging
+
+logger = logging.getLogger(__name__)
 
 class IsBidderOrAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -40,16 +48,19 @@ class BidViewSet(viewsets.ModelViewSet):
     queryset = Bid.objects.all()
     serializer_class = BidSerializer
     permission_classes = [IsBidderOrAdmin]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
         queryset = super().get_queryset()
         tender_id = self.request.query_params.get('tender')
         status = self.request.query_params.get('status')
+        company_id = self.request.query_params.get('company_id')
         if tender_id:
             queryset = queryset.filter(tender_id=tender_id)
         if status:
             queryset = queryset.filter(status=status)
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
         return queryset
 
     def perform_create(self, serializer):
@@ -80,20 +91,23 @@ class BidViewSet(viewsets.ModelViewSet):
                 details=f"Bid updated for tender {bid.tender.reference_number}"
             )
 
+    @action(detail=False, methods=['get'], url_path='by-company')
+    def by_company(self, request):
+        company_id = request.query_params.get('company_id')
+        if not company_id:
+            raise ValidationError("company_id is required")
+        queryset = self.get_queryset().filter(company_id=company_id)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def submit(self, request, pk=None):
         bid = self.get_object()
-        if bid.status != 'draft':
-            return Response({'error': 'Bid is not in draft status'}, status=400)
-        if bid.tender.submission_deadline < timezone.now():
-            return Response({'error': 'Tender submission deadline has passed'}, status=400)
-        if bid.tender.completion_period_days and not (bid.completion_complied or bid.proposed_completion_days):
-            return Response({'error': 'Must comply with completion period or propose an alternative'}, status=400)
-        if bid.proposed_completion_days and not bid.tender.allow_alternative_delivery:
-            return Response({'error': 'Alternative completion period not allowed'}, status=400)
-        required_docs = bid.tender.required_documents.filter(is_required='required')
-        if required_docs.count() > bid.bids_documents.count():
-            return Response({'error': 'Missing required documents'}, status=400)
+        # Reuse validation logic
+        validation_response = self.validate_submit(request, pk)
+        if not validation_response.data['is_ready']:
+            return Response({'error': '; '.join(validation_response.data['errors'])}, status=400)
+        
         with transaction.atomic():
             bid.status = 'submitted'
             bid.submission_date = timezone.now()
@@ -105,6 +119,97 @@ class BidViewSet(viewsets.ModelViewSet):
                 details=f"Bid submitted for tender {bid.tender.reference_number}"
             )
         return Response({'status': 'Bid submitted successfully'})
+
+    @action(detail=True, methods=['get'], url_path='validate-submit')
+    def validate_submit(self, request, pk=None):
+        bid = self.get_object()
+        errors = []
+
+        # Check status
+        if bid.status != 'draft':
+            errors.append('Bid is not in draft status')
+
+        # Check deadline
+        if bid.tender.submission_deadline < timezone.now():
+            errors.append('Tender submission deadline has passed')
+
+        # Check completion compliance
+        if bid.tender.completion_period_days and not (bid.completion_complied or bid.proposed_completion_days):
+            errors.append('Must comply with completion period or propose an alternative')
+
+        # Check alternative delivery allowance
+        if bid.proposed_completion_days and not bid.tender.allow_alternative_delivery:
+            errors.append('Alternative completion period not allowed for this tender')
+
+        # Check JV if applicable
+        if bid.jv_partner and (bid.jv_percentage is None or bid.jv_percentage <= 0 or bid.jv_percentage >= 100):
+            errors.append('JV percentage must be between 0 and 100 when a JV partner is specified')
+
+        # Check required documents
+        required_docs = bid.tender.required_documents.filter(is_required=True)
+        submitted_doc_ids = bid.bids_documents.values_list('tender_document__id', flat=True)
+        missing_docs = required_docs.exclude(id__in=submitted_doc_ids)
+        if missing_docs.exists():
+            missing_names = list(missing_docs.values_list('name', flat=True))
+            errors.append(f'Missing required documents: {", ".join(missing_names)}')
+
+        # Log the validation
+        logger.info(f"Validated bid {bid.id} for user {request.user.id}: is_ready={not bool(errors)}, errors={errors}")
+
+        if errors:
+            return Response({
+                'is_ready': False,
+                'errors': errors
+            }, status=200)
+
+        return Response({'is_ready': True}, status=200)
+
+    @action(detail=True, methods=['get'], url_path='opening-report')
+    def opening_report(self, request, pk=None):
+        bid = self.get_object()
+        if bid.status not in ['submitted', 'under_evaluation', 'accepted', 'rejected']:
+            raise ValidationError("Opening report is only available for submitted or evaluated bids.")
+
+        # Generate PDF in memory
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+
+        # Header
+        p.drawString(100, height - 100, f"Bid Opening Report for {bid.tender.title}")
+        p.drawString(100, height - 120, f"Reference: {bid.tender.reference_number}")
+        p.drawString(100, height - 140, f"Bidder: {bid.company.name}")
+        p.drawString(100, height - 160, f"Status: {bid.status.upper()}")
+        p.drawString(100, height - 180, f"Total Price: {bid.total_price} {bid.currency}")
+        p.drawString(100, height - 200, f"Submission Date: {bid.submission_date}")
+        p.drawString(100, height - 220, f"Generated on: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Documents section
+        y = height - 240
+        p.drawString(100, y, "Submitted Documents:")
+        y -= 20
+        for doc in bid.bids_documents.all():
+            p.drawString(100, y, f"- {doc.tender_document.name} (Submitted at {doc.submitted_at})")
+            y -= 20
+            if y < 100:  # Simple page break
+                p.showPage()
+                y = height - 100
+
+        # Add more sections as needed (e.g., financial responses)
+        p.drawString(100, y, "Financial Responses:")
+        y -= 20
+        for fr in bid.bids_financial_responses.all():
+            p.drawString(100, y, f"- {fr.financial_requirement.name}: {fr.actual_value} (Complied: {fr.complied})")
+            y -= 20
+            if y < 100:
+                p.showPage()
+                y = height - 100
+
+        p.save()
+        buffer.seek(0)
+
+        # Return the PDF
+        return FileResponse(buffer, as_attachment=False, filename=f"bid_{bid.slug}_opening_report.pdf", content_type='application/pdf')
 
 class BidDocumentViewSet(viewsets.ModelViewSet):
     """

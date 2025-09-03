@@ -50,7 +50,7 @@ router.register(r'agencies', AgencyDetailsViewSet, basename='agency')
 #  /api/v1/tenders/{slug}/personnel-requirements/
 #  /api/v1/tenders/{slug}/schedule-items/
 #  /api/v1/tenders/{slug}/technical-specifications/  # NEW: Nested for technical specs
-#  /api/v1/tenders/{slug}/re-advertise/  # NEW: Custom action for re-advertise
+#  /api/v1/tenders/{slug}/award/  # NEW: Custom action for award
 router.register(r'tenders', TenderViewSet, basename='tender')
 
 # flat CRUD on each child (if you ever need it directly)
