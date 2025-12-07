@@ -91,6 +91,15 @@ class BidViewSet(viewsets.ModelViewSet):
                 details=f"Bid updated for tender {bid.tender.reference_number}"
             )
 
+    @action(detail=True, methods=['patch'], url_path='reject')
+    def reject(self, request, pk=None):
+        bid = self.get_object()
+        if bid.status in ['rejected', 'accepted']:
+            raise ValidationError("Bid already finalized.")
+        bid.status = 'rejected'
+        bid.save()
+        return Response({'status': 'Bid rejected'})
+
     @action(detail=False, methods=['get'], url_path='by-company')
     def by_company(self, request):
         company_id = request.query_params.get('company_id')

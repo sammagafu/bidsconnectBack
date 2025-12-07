@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'payments',
     'tenders',
     'marketplace',
+    'automation',
 
     # third party apps
     'rest_framework',
