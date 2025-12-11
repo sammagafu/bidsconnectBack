@@ -163,6 +163,8 @@ DJOSER = {
 
 # CORS
 CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "http://178.128.143.28",
     "http://bidsconnect.co.tz",
     "http://www.bidsconnect.co.tz",
