@@ -1,8 +1,11 @@
+import csv
 import logging
 import os
 from datetime import timedelta
+from io import StringIO
 
 from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
 from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
@@ -597,19 +600,78 @@ class CompanyDocumentCSVExportView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsCompanyOwner]
 
     def get(self, request, company_pk):
-        # TODO: implement CSV generation
-        return Response({"detail": "CSV export not implemented."},
-                        status=status.HTTP_501_NOT_IMPLEMENTED)
+        company = get_object_or_404(Company, pk=company_pk, deleted_at__isnull=True)
+        documents = CompanyDocument.objects.filter(company=company).select_related('uploaded_by').order_by('document_type', 'name')
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([
+            'Name', 'Document Type', 'Category', 'Expiry Date', 'Is Verified',
+            'Uploaded At', 'Uploaded By', 'Days to Expiry'
+        ])
+        for doc in documents:
+            writer.writerow([
+                doc.name,
+                doc.get_document_type_display() or doc.document_type,
+                doc.get_category_display() if doc.category else '',
+                doc.expiry_date.isoformat() if doc.expiry_date else '',
+                doc.is_verified,
+                doc.uploaded_at.isoformat() if doc.uploaded_at else '',
+                doc.uploaded_by.email if doc.uploaded_by else '',
+                doc.days_to_expiry if doc.days_to_expiry is not None else '',
+            ])
+        response = HttpResponse(buffer.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="company_{company_pk}_documents.csv"'
+        return response
 
 class DocumentExpiryWebhookView(APIView):
     """
     POST /accounts/webhooks/documents/expiry/ handles document expiry webhooks.
+    Accepts JSON: { "document_id": "<uuid>" } to process one doc, or { "event": "check_expiry" } to list expiring.
     """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        # TODO: process webhook
-        return Response({"detail": "Webhook received."}, status=status.HTTP_200_OK)
+        data = getattr(request, 'data', None) or {}
+        if not isinstance(data, dict):
+            data = {}
+        document_id = data.get('document_id')
+        event = data.get('event')
+        processed = []
+        if document_id:
+            try:
+                doc = CompanyDocument.objects.get(pk=document_id)
+                processed.append(str(doc.id))
+                logger.info(
+                    "Document expiry webhook: document_id=%s company_id=%s expiry=%s",
+                    doc.id, doc.company_id, doc.expiry_date
+                )
+                if doc.is_expiring_soon():
+                    send_mail(
+                        subject=f"Document expiring soon: {doc.name}",
+                        message=f"Document '{doc.name}' ({doc.get_document_type_display()}) for {doc.company.name} expires on {doc.expiry_date}.",
+                        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@bidsconnect.co.tz'),
+                        recipient_list=[doc.company.owner.email],
+                        fail_silently=True,
+                    )
+            except CompanyDocument.DoesNotExist:
+                pass
+        if event == 'check_expiry':
+            threshold = timezone.now().date() + timedelta(days=30)
+            expiring = CompanyDocument.objects.filter(
+                expiry_date__lte=threshold,
+                expiry_date__gte=timezone.now().date()
+            ).select_related('company', 'company__owner')[:100]
+            for doc in expiring:
+                processed.append(str(doc.id))
+                logger.info(
+                    "Document expiring: document_id=%s company_id=%s expiry=%s",
+                    doc.id, doc.company_id, doc.expiry_date
+                )
+        return Response({
+            "detail": "Webhook processed.",
+            "processed_count": len(processed),
+            "processed_ids": processed,
+        }, status=status.HTTP_200_OK)
 
 class CompanyDashboardView(APIView):
     """

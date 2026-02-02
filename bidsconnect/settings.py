@@ -21,7 +21,6 @@ ALLOWED_HOSTS = [
     'www.bidsconnect.co.tz',
     'localhost',
     '127.0.0.1',
-    'bidsconnect.co.tz,bidsconnect.co.tz',  # safety net for broken proxy
 ]
 
 # Application definition
@@ -106,13 +105,13 @@ USE_I18N = True
 USE_TZ = True
 
 # ──────────────────────────────────────────────────────────────
-#  CRITICAL: STATIC & MEDIA SETTINGS (THIS WAS MISSING!)
+#  STATIC & MEDIA (portable: use env in production)
 # ──────────────────────────────────────────────────────────────
 STATIC_URL = '/static/'
-STATIC_ROOT = '/home/sammy/bidsconnectBack/staticfiles'   # ← REQUIRED for collectstatic
+STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = '/home/sammy/bidsconnectBack/media'
+MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
 
 # Optional: if you have a project-level static folder
 # STATICFILES_DIRS = [BASE_DIR / "static"]

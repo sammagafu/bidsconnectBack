@@ -13,6 +13,9 @@ urlpatterns = [
     path('api/v1/marketplaces/', include('marketplace.urls')),
     path('api/v1/legal-documents/', include('legal.urls')),
     path('api/v1/automation/', include('automation.urls')),
+    path('api/v1/notifications/', include('notifications.urls')),
+    path('api/v1/analytics/', include('analytics.urls')),
+    path('api/v1/payments/', include('payments.urls')),
 ]
 
 # Serve static and media files during development
