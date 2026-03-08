@@ -8,7 +8,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from django_filters import rest_framework as filters
 
-from accounts.permissions import IsCompanyOwner
+from accounts.permissions import IsCompanyOwner, IsCompanyAdminOrOwner
 from rest_framework.permissions import IsAdminUser
 
 from .models import (
@@ -79,7 +79,7 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
 class ProductServiceViewSet(viewsets.ModelViewSet):
     queryset = ProductService.objects.filter(is_active=True)
     serializer_class = ProductServiceSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsCompanyOwner]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsCompanyAdminOrOwner]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ProductServiceFilter
@@ -87,26 +87,30 @@ class ProductServiceViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'name']
 
     def perform_create(self, serializer):
-        serializer.save(company=self.request.user.company)
+        company = self.request.user.get_primary_company()
+        if not company:
+            raise PermissionDenied("You must own or administer a company to list products or services.")
+        serializer.save(company=company)
 
     def get_queryset(self):
         if self.request.user.is_staff:
             return ProductService.objects.all()
-        if hasattr(self.request.user, 'company'):
-            return ProductService.objects.filter(Q(company=self.request.user.company) | Q(is_active=True))
-        return self.queryset
+        company = getattr(self.request.user, 'get_primary_company', lambda: None)()
+        if company:
+            return ProductService.objects.filter(Q(company=company) | Q(is_active=True))
+        return ProductService.objects.filter(is_active=True)
 
 
 class ProductImageViewSet(viewsets.ModelViewSet):
     queryset = ProductImage.objects.all()
     serializer_class = ProductImageSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsCompanyOwner]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsCompanyAdminOrOwner]
 
 
 class PriceListViewSet(viewsets.ModelViewSet):
     queryset = PriceList.objects.all()
     serializer_class = PriceListSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsCompanyOwner]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsCompanyAdminOrOwner]
     filterset_fields = ['product_service']
 
 
@@ -135,17 +139,20 @@ class RFQItemViewSet(viewsets.ModelViewSet):
 class QuoteViewSet(viewsets.ModelViewSet):
     queryset = Quote.objects.all()
     serializer_class = QuoteSerializer
-    permission_classes = [permissions.IsAuthenticated, IsCompanyOwner]
+    permission_classes = [permissions.IsAuthenticated, IsCompanyAdminOrOwner]
     filterset_class = QuoteFilter
 
     def perform_create(self, serializer):
-        serializer.save(seller=self.request.user.company)
+        company = self.request.user.get_primary_company()
+        if not company:
+            raise PermissionDenied("You must own or administer a company to submit quotes.")
+        serializer.save(seller=company)
 
 
 class QuoteItemViewSet(viewsets.ModelViewSet):
     queryset = QuoteItem.objects.all()
     serializer_class = QuoteItemSerializer
-    permission_classes = [permissions.IsAuthenticated, IsCompanyOwner]
+    permission_classes = [permissions.IsAuthenticated, IsCompanyAdminOrOwner]
 
 
 class CompanyReviewViewSet(viewsets.ModelViewSet):

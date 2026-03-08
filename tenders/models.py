@@ -3,9 +3,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.text import slugify
-from accounts.models import CustomUser
-from django.db.models.signals import post_save
-from django.dispatch import receiver
+from accounts.models import CustomUser, Company
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.conf import settings
@@ -149,9 +147,10 @@ class Tender(models.Model):
         ('Non-Governmental Organization', 'Non-Governmental Organization Tendering'),
         ('Government Agency', 'Government Agency Tendering'),
     )
+    # Bid Security: two types — (1) Tender Security = amount or percentage; (2) Tender Securing Declaration = document
     TenderSecurityType = (
-        ("Tender Security", "Tender Security"),
-        ("Tender Securing Declaration", "Tender Securing Declaration"),
+        ("Tender Security", "Tender Security"),  # amount or percentage
+        ("Tender Securing Declaration", "Tender Securing Declaration"),  # document
     )
 
     # NEW: Added for gaps from documents
@@ -163,7 +162,7 @@ class Tender(models.Model):
         ('other', 'Other'),
     )
 
-    title = models.CharField(max_length=200)
+    title = models.CharField(max_length=200, help_text="Tender title; use description for full details.")
     slug = models.SlugField(max_length=200, unique=True, blank=True)
     reference_number = models.CharField(max_length=50, unique=True)
     tender_type_country = models.CharField(max_length=30, choices=TenderTypeCountry)
@@ -174,17 +173,23 @@ class Tender(models.Model):
     procurement_process = models.ForeignKey(ProcurementProcess, on_delete=models.SET_NULL, null=True, blank=True)
     agency = models.ForeignKey(AgencyDetails, on_delete=models.SET_NULL, null=True, blank=True)
     description = models.TextField(blank=True)
-    publication_date = models.DateTimeField(null=True, blank=True)
+    # Tender contact (address, phone, email) — can override or supplement agency details
+    address = models.TextField(blank=True, help_text="Tender contact address.")
+    phone_number = models.CharField(max_length=20, blank=True, null=True, help_text="Tender contact phone.")
+    email = models.EmailField(blank=True, null=True, help_text="Tender contact email.")
+    publication_date = models.DateTimeField(null=True, blank=True, help_text="Date of issue / when tender is published.")
     submission_deadline = models.DateTimeField()
     validity_period_days = models.PositiveIntegerField(default=90)
     completion_period_days = models.PositiveIntegerField(null=True, blank=True)  # Used for delivery period
     litigation_history_start = models.DateField(null=True, blank=True)
     litigation_history_end = models.DateField(null=True, blank=True)
     tender_document = models.FileField(upload_to='tender_docs/%Y/%m/', blank=True, null=True)
-    tender_fees = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), validators=[MinValueValidator(Decimal('0'))])
-    tender_securing_type = models.CharField(max_length=30, choices=TenderSecurityType, default="Tender Securing Declaration")
-    tender_security_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))])
-    tender_security_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])
+    # Tender participation fee (TZS or USD — use currency field)
+    tender_fees = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), validators=[MinValueValidator(Decimal('0'))], help_text="Tender participation fee. Currency in currency field (TZS or USD).")
+    # Bid Security: (1) Tender Security = amount or percentage; (2) Tender Securing Declaration = document
+    tender_securing_type = models.CharField(max_length=30, choices=TenderSecurityType, default="Tender Securing Declaration", help_text="Bid Security type.")
+    tender_security_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))], help_text="Bid security as percentage (when Tender Security).")
+    tender_security_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))], help_text="Bid security as amount (when Tender Security).")
     tender_security_currency = models.CharField(max_length=3, choices=CurrencyTYpes, default='TZS')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
     last_status_change = models.DateTimeField(auto_now=True)
@@ -221,11 +226,15 @@ class Tender(models.Model):
                 counter += 1
         if self.status == 'published' and not self.publication_date:
             self.publication_date = timezone.now()
-        if self.status != self._original_status:  # Track status change
+        old_status = self._original_status
+        if self.status != old_status:
             self.last_status_change = timezone.now()
             TenderStatusHistory.objects.create(tender=self, status=self.status, changed_by=self.created_by)
         super().save(*args, **kwargs)
-        self._original_status = self.status  # Update after save
+        self._original_status = self.status
+        # Notify subscribers only when status transitions to published (single source of truth)
+        if self.status == 'published' and old_status != 'published':
+            self.send_notification_emails()
 
     def send_notification_emails(self):
         subscriptions = TenderSubscription.objects.filter(
@@ -236,7 +245,7 @@ class Tender(models.Model):
         ).select_related('user').filter(is_active=True)
         for sub in subscriptions:
             user = sub.user
-            pref = user.notification_preference
+            pref = getattr(user, 'notification_preference', None)
             if pref and pref.email_notifications:
                 context = {'tender': self, 'user': user}
                 html_message = render_to_string('emails/tender_notification.html', context)
@@ -244,7 +253,7 @@ class Tender(models.Model):
                 send_mail(
                     subject=f"New Tender Published: {self.title}",
                     message=plain_message,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@bidsconnect.co.tz'),
                     recipient_list=[user.email],
                     html_message=html_message,
                     fail_silently=True
@@ -457,6 +466,7 @@ class TenderNotification(models.Model):
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='notifications')
     sent_at = models.DateTimeField(null=True, blank=True)
     is_sent = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
     delivery_status = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -478,12 +488,6 @@ class TenderStatusHistory(models.Model):
     def __str__(self):
         return f"{self.tender.reference_number} -> {self.status} at {self.changed_at}"
 
-# Signals for notifications
-@receiver(post_save, sender=Tender)
-def create_tender_notifications(sender, instance, created, **kwargs):
-    if instance.status == 'published':
-        instance.send_notification_emails()
-
 class Award(models.Model):
     tender = models.OneToOneField(Tender, on_delete=models.CASCADE, related_name='award')
     awarded_bid = models.ForeignKey('bids.Bid', on_delete=models.SET_NULL, null=True, blank=True, related_name='awards')
@@ -494,3 +498,69 @@ class Award(models.Model):
 
     def __str__(self):
         return f"Award for {self.tender.reference_number}"
+
+
+class TenderConversation(models.Model):
+    """One conversation thread per company per tender (team chat on a tender)."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='tender_conversations')
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE, related_name='conversations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('company', 'tender')]
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"Conversation: {self.company.name} — {self.tender.reference_number}"
+
+
+class TenderMessage(models.Model):
+    """A message in a tender conversation (team messaging)."""
+    conversation = models.ForeignKey(TenderConversation, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='tender_messages_sent')
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.sender.email}: {self.content[:50]}"
+
+
+class PricingConfig(models.Model):
+    """
+    Configurable platform fees (price caps). Used for tender document, tender summary,
+    and any other fee type. Fallback to tenders.constants when no row exists.
+    """
+    FEE_TENDER_DOCUMENT = 'tender_document'
+    FEE_TENDER_SUMMARY_ONE_TIME = 'tender_summary_one_time'
+    FEE_TYPES = (
+        (FEE_TENDER_DOCUMENT, 'Tender document (non-member)'),
+        (FEE_TENDER_SUMMARY_ONE_TIME, 'Tender summary (one-time)'),
+    )
+    fee_type = models.CharField(max_length=50, unique=True, choices=FEE_TYPES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0'))])
+    currency = models.CharField(max_length=3, default='TZS')
+    cap = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text='Optional maximum amount (price cap). If set, effective price is min(amount, cap).'
+    )
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Pricing config'
+        verbose_name_plural = 'Pricing configs'
+        ordering = ['fee_type']
+
+    def __str__(self):
+        return f"{self.fee_type}: {self.amount} {self.currency}"
+
+    @property
+    def effective_amount(self):
+        if self.cap is not None and self.cap < self.amount:
+            return self.cap
+        return self.amount

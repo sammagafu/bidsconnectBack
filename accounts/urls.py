@@ -6,6 +6,7 @@ from .views import (
     CompanyViewSet,
     CompanyUserViewSet,
     CompanyInvitationViewSet,
+    CompanyTaskViewSet,
     CompanyDocumentViewSet,
     CompanyOfficeViewSet,
     CompanyCertificationViewSet,
@@ -39,6 +40,11 @@ router.register(
     r'companies/(?P<company_pk>[^/.]+)/invitations',
     CompanyInvitationViewSet,
     basename='company-invitations'
+)
+router.register(
+    r'companies/(?P<company_pk>[^/.]+)/tasks',
+    CompanyTaskViewSet,
+    basename='company-tasks'
 )
 router.register(
     r'companies/(?P<company_pk>[^/.]+)/documents',

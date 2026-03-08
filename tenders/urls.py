@@ -20,7 +20,10 @@ from .views import (
     NotificationPreferenceViewSet,
     TenderNotificationViewSet,
     TenderStatusHistoryViewSet,
-    TenderTechnicalSpecificationViewSet,  # NEW: Import new ViewSet
+    TenderTechnicalSpecificationViewSet,
+    TenderConversationViewSet,
+    TenderMessageViewSet,
+    PricingConfigViewSet,
 )
 
 router = DefaultRouter()
@@ -113,7 +116,18 @@ router.register(
     TenderStatusHistoryViewSet,
     basename='tender-status'
 )
+router.register(
+    r'conversations',
+    TenderConversationViewSet,
+    basename='tender-conversation'
+)
+router.register(r'pricing', PricingConfigViewSet, basename='pricing')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path(
+        'conversations/<int:conversation_pk>/messages/',
+        TenderMessageViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='tender-conversation-messages'
+    ),
 ]

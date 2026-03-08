@@ -43,3 +43,11 @@ NOTIFICATION_RETRY_DELAY_MINUTES = 5
 
 # Invitation settings
 INVITATION_EXPIRY_DAYS = 1
+
+# Company task status
+COMPANY_TASK_STATUS_CHOICES = [
+    ('todo', 'To Do'),
+    ('in_progress', 'In Progress'),
+    ('done', 'Done'),
+    ('cancelled', 'Cancelled'),
+]

@@ -8,13 +8,13 @@
 ## Features
 
 - **Accounts** — User registration, companies, invitations, documents, offices, certifications, financials, personnel, experience
-- **Tenders** — Categories, agencies, procurement processes, tender CRUD, requirements, subscriptions, notifications
+- **Tenders** — Categories, agencies, procurement processes, tender CRUD, requirements, subscriptions, notifications, **tender digest** (daily/weekly email when you subscribe to a category)
 - **Bids** — Bid submission and responses (financial, turnover, experience, personnel, documents, evaluations)
 - **Marketplace** — Categories, products/services, RFQs, quotes, reviews, messages
-- **Legal** — Power of attorney and related legal documents
+- **Legal** — Power of attorney and related legal documents (Word/PDF export via python-docx and reportlab)
 - **Automation** — Power of attorney, tender securing declaration, litigation history, cover letters
-- **Payments** — Payment records (generic, linked to any content)
-- **Notifications & Analytics** — Placeholder endpoints (ready for expansion)
+- **Payments** — Payment records (generic, linked to any content). *Note: Payment gateway (e.g. M-Pesa) is not integrated; status is recorded by the client. Integrate webhooks for production.*
+- **Notifications & Analytics** — In-app notification list (tender notifications), basic analytics stats (tender/bid counts)
 
 ## Tech Stack
 
@@ -61,6 +61,8 @@ Admin: **http://127.0.0.1:8000/admin/**
 
 ### Environment Variables
 
+Copy `.env.example` to `.env` and set as needed:
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SECRET_KEY` | Django secret key | (insecure default in code) |
@@ -69,10 +71,29 @@ Admin: **http://127.0.0.1:8000/admin/**
 | `DATABASE_URL` | DB URL (optional) | SQLite |
 | `STATIC_ROOT` | Static files path | `BASE_DIR/staticfiles` |
 | `MEDIA_ROOT` | Uploaded files path | `BASE_DIR/media` |
-| `DEFAULT_FROM_EMAIL` | Sender for emails | — |
+| `EMAIL_BACKEND` | Email backend | `console` (dev) |
+| `DEFAULT_FROM_EMAIL` | Sender for emails | `noreply@bidsconnect.co.tz` |
 | `SITE_URL` | Base URL for links (e.g. invitations) | — |
 
+**Email in production:** Set `EMAIL_BACKEND` to `django.core.mail.backends.smtp.EmailBackend` and configure `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL`. See `.env.example` for an example.
+
 See [docs/API.md](docs/API.md) for full API reference and [docs/SYSTEM_FLOW.md](docs/SYSTEM_FLOW.md) for system flows.
+
+### Running tests
+
+With the virtual environment activated and dependencies installed:
+
+```bash
+python manage.py test
+```
+
+To run specific test modules:
+
+```bash
+python manage.py test accounts.tests.test_invitation_accept accounts.tests.test_webhook_auth bids.tests.test_bid_scope_and_permissions
+```
+
+New tests cover: invitation accept (email match and company limit), document expiry webhook authentication, and bid list scoping by company membership.
 
 ## Documentation
 
@@ -80,7 +101,11 @@ See [docs/API.md](docs/API.md) for full API reference and [docs/SYSTEM_FLOW.md](
 |----------|-------------|
 | [API Documentation](docs/API.md) | All API endpoints, auth, request/response details |
 | [System Flow](docs/SYSTEM_FLOW.md) | User journeys, tender–bid flow, data flow diagrams |
+| [BidsConnect Spec](docs/BIDS_CONNECT_SPEC.md) | Product requirements, tender/bid rules, fees, user journey |
+| [User Onboarding & Teams](docs/USER_ONBOARDING_AND_TEAMS.md) | Onboarding, company members, roles, company tasks, tender conversations |
+| [User Journeys](docs/USER_JOURNEYS.md) | Five flows: onboarding, team, applying for tender, marketplace advertising, RFQ (steps + API hints) |
 | [Frontend Integration](docs/FRONTEND_INTEGRATION.md) | How to consume the API from the frontend, what data to pass, fetch/axios examples |
+| [Product feature suggestions](docs/PRODUCT_FEATURE_SUGGESTIONS.md) | UX and product design ideas (onboarding, payments, reminders, trust, quick wins) |
 
 ## Authentication
 

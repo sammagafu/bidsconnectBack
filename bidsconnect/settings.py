@@ -67,7 +67,7 @@ ROOT_URLCONF = 'bidsconnect.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -181,4 +181,9 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Email (use env in production; console backend for dev)
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@bidsconnect.co.tz')
+
+# Document expiry webhook (cron/external caller must send this secret)
+DOCUMENT_EXPIRY_WEBHOOK_SECRET = os.environ.get('DOCUMENT_EXPIRY_WEBHOOK_SECRET', '')

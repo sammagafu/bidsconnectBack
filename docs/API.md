@@ -39,6 +39,8 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 | GET/PUT/PATCH/DELETE | `/accounts/companies/{company_pk}/users/{id}/` | Company user CRUD |
 | GET/POST | `/accounts/companies/{company_pk}/invitations/` | Invitations |
 | GET/PUT/PATCH/DELETE | `/accounts/companies/{company_pk}/invitations/{id}/` | Invitation CRUD |
+| GET/POST | `/accounts/companies/{company_pk}/tasks/` | Company tasks (assign to members; filter by status, assignee, tender, bid) |
+| GET/PUT/PATCH/DELETE | `/accounts/companies/{company_pk}/tasks/{id}/` | Task CRUD |
 
 ### Company resources (nested under `companies/{company_pk}/`)
 
@@ -63,7 +65,7 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 | GET | `/accounts/companies/{company_pk}/dashboard/` | Yes | Company dashboard summary |
 | GET | `/accounts/companies/{company_pk}/documents/export/` | Yes (owner) | CSV export of documents |
 | POST | `/accounts/invitations/accept/{token}/` | Yes | Accept invitation |
-| POST | `/accounts/webhooks/documents/expiry/` | No | Document expiry webhook (body: `document_id`, `event`) |
+| POST | `/accounts/webhooks/documents/expiry/` | Webhook secret | Document expiry webhook (body: `document_id`, `event`). When `DOCUMENT_EXPIRY_WEBHOOK_SECRET` is set, send header `X-Webhook-Secret: <secret>` or `Authorization: Bearer <secret>`; otherwise **401** is returned. |
 
 ### Audit logs
 
@@ -123,6 +125,12 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 | GET/PUT/PATCH | `/tenders/notification-preferences/` | Notification preferences |
 | GET | `/tenders/tender-notifications/` | Tender notifications (read-only) |
 | GET | `/tenders/tender-status-history/` | Tender status history (read-only) |
+| GET/POST | `/tenders/conversations/` | List/create tender conversation (team chat). Query: `?tender=<slug>`. Body: `{"tender_slug": "..."}` |
+| GET | `/tenders/conversations/{id}/` | Conversation detail |
+| GET/POST | `/tenders/conversations/{id}/messages/` | List/post messages in conversation |
+| GET | `/tenders/pricing/` | List platform pricing (tender document fee, tender summary one-time). Auth required. |
+| GET | `/tenders/pricing/{fee_type}/` | Retrieve one pricing config (e.g. `tender_document`, `tender_summary_one_time`). |
+| PUT/PATCH | `/tenders/pricing/{fee_type}/` | Update pricing (staff only). Body: `amount`, `currency`, `cap`, `is_active`. |
 
 ---
 
@@ -212,8 +220,13 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET | `/notifications/` | No | Placeholder — app status |
-| GET | `/analytics/` | No | Placeholder — app status |
+| GET | `/notifications/` | Yes | Unified in-app notifications (tender + marketplace). Query: `?type=`, `?is_read=`, `?page=`, `?page_size=` |
+| PATCH | `/notifications/{id}/` | Yes | Mark notification as read (body: `{"is_read": true}`). Supported for marketplace notifications. |
+| GET | `/notifications/ping/` | No | App status |
+| GET | `/analytics/` | Yes | Comprehensive dashboard: tenders, bids, marketplace, accounts, payments. Query: `?scope=platform\|company`, `?company_id=` (required if scope=company), `?period=30d` |
+| GET | `/analytics/ping/` | No | App status |
+
+**Analytics response (GET /analytics/):** `stats` contains `tenders` (total, by_status, optional recent_*_30d), `bids` (total, by_status, optional recent_submitted_30d), `marketplace` (products, rfq, quotes, reviews), `accounts` (companies_total/users_total or company_members), `payments` (total, by_status).
 
 ---
 
@@ -240,10 +253,12 @@ Response:
 
 ## Errors
 
-- **401 Unauthorized** — Missing or invalid JWT.
-- **403 Forbidden** — Valid user but not allowed (e.g. not company owner).
+- **401 Unauthorized** — Missing or invalid JWT; or invalid/missing webhook secret (document expiry webhook).
+- **403 Forbidden** — Valid user but not allowed (e.g. not company owner, or invitation sent to another email).
 - **404 Not Found** — Resource or URL not found.
 - **400 Bad Request** — Validation errors; body usually includes field-level errors.
+
+**Error response convention:** Use `detail` for a single message (e.g. `{"detail": "..."}`). Use `errors` for a list of validation messages when applicable (e.g. bid submit validation: `{"detail": "...", "errors": ["...", "..."]}`). Avoid mixing `error` and `detail` for the same case; prefer `detail`.
 
 ---
 

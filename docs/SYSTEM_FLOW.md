@@ -1,6 +1,6 @@
 # BidsConnect System Flow
 
-This document describes the main flows in BidsConnect: user and company setup, tender lifecycle, bid lifecycle, and how data moves between modules.
+This document describes the main flows in BidsConnect: user and company setup, tender lifecycle, bid lifecycle, and how data moves between modules. See [BIDS_CONNECT_SPEC.md](BIDS_CONNECT_SPEC.md) for product requirements and [USER_JOURNEYS.md](USER_JOURNEYS.md) for step-by-step user flows (onboarding, team, tender, marketplace, RFQ).
 
 ---
 
@@ -96,6 +96,25 @@ sequenceDiagram
 
 ---
 
+### 2.1 Normal user journey (tender participation)
+
+```mermaid
+flowchart LR
+    A[Login] --> B[See tenders]
+    B --> C[Request to apply]
+    C --> D[Approval]
+    D --> E[Tender submission]
+    E --> F[Finalized]
+```
+
+**Tender submission steps (bidder):**
+
+1. **Get a summary** for the tender (e.g. tender summary/updates — premium free, one-time 50,000 TZS).
+2. **Sign** (e.g. agreement or tender securing declaration).
+3. **See progress** (track submission status via bid status and audit logs).
+
+---
+
 ## 3. Tender lifecycle flow
 
 ```mermaid
@@ -103,25 +122,30 @@ stateDiagram-v2
     [*] --> draft: Create tender
     draft --> pending: Submit / prepare
     pending --> published: Publish
-    published --> under_evaluation: Close / evaluate
-    under_evaluation --> awarded: Award
+    published --> evaluation: Close / evaluate
+    evaluation --> awarded: Award
     awarded --> [*]
 
     draft --> draft: Edit
     pending --> draft: Edit (if allowed)
 ```
 
+**Note:** Tender status in the database is `evaluation` (not `under_evaluation`); bid status uses `under_evaluation`.
+
 **Actors:**
 
-- **Publishers** (e.g. agencies / admins): create tenders, set requirements, publish, award.
+- **Admin**: can post, delete, update tenders (on behalf of clients). Posts: date of issue, deadline, documents.
+- **Organizations / company admins**: can open (create/edit) and post their own tenders.
 - **Bidders**: discover tenders, subscribe to categories, receive notifications.
 
 **Flow:**
 
-1. Create tender (draft) → add required documents, financial/experience/personnel requirements, schedule, technical specs.
+1. Create tender (draft) → add required documents, financial/experience/personnel requirements, schedule, technical specs, **address/phone/email**, **participation fee (TZS or USD)**.
 2. Publish → status becomes published; subscribers (by category/subcategory/procurement process) get notified (email if enabled).
-3. After deadline → status can move to under_evaluation.
+3. After deadline → status can move to **evaluation**.
 4. Award → winner recorded; status awarded.
+
+**Bid Security (two types):** (1) **Tender Security** — amount or percentage; (2) **Tender Securing Declaration** — document. See BIDS_CONNECT_SPEC.md.
 
 **Reference data:** Categories, subcategories, procurement processes, agencies are managed (often admin) and used when creating/subscribing to tenders.
 
@@ -151,8 +175,8 @@ flowchart LR
 
 1. **Create bid** (draft) — linked to tender and company.
 2. **Add responses** — documents, financial, turnover, experience, personnel, office, source, litigation, schedule, technical.
-3. **Submit** — `POST /bids/{id}/submit/` → status moves to submitted (validations: deadline, required data).
-4. **Evaluation** — evaluators use bid evaluations and audit logs; status can move to under_evaluation, then accepted/rejected.
+3. **Submit** — `POST /bids/{id}/submit/` → status moves to **submitted** (validations: deadline, required data).
+4. **Evaluation / audit** — evaluators use bid **evaluations** and **audit logs** (BidAuditLog); status can move to **under_evaluation**, then **accepted** or **rejected**. Use “audit” (not “review”) for audit trail.
 
 Bid is always tied to one **tender** and one **company** (and user).
 
@@ -190,8 +214,9 @@ flowchart TB
     PREF -- "email_notifications" --> TN
 ```
 
-- **TenderSubscription**: user subscribes to categories/subcategories/procurement process; when a tender in that set is published, they can get a **TenderNotification**.
-- **NotificationPreference**: per-user (e.g. email on/off, frequency for digest).
+- **TenderSubscription**: user subscribes to categories/subcategories/procurement process; when a tender in that set is published, they get a **TenderNotification** (immediate email if preferences allow).
+- **NotificationPreference**: per-user (e.g. email on/off, **notification_frequency**: immediate / daily / weekly).
+- **Tender digest**: Users with **daily** or **weekly** frequency receive a digest email of new *published* tenders matching their subscriptions. Run via cron: `python manage.py send_tender_digest daily` and/or `python manage.py send_tender_digest weekly`.
 - **Bid**: references Tender and Company; created by users belonging to that company.
 
 ---
@@ -268,7 +293,7 @@ sequenceDiagram
 ```
 
 - **Company documents** have `expiry_date`; “expiring soon” is defined in the accounts app (e.g. within N days).
-- **Webhook** can process a single document (and optionally send email) or list expiring documents (`event: "check_expiry"`).
+- **Webhook** can process a single document (and optionally send email) or list expiring documents (`event: "check_expiry"`). When `DOCUMENT_EXPIRY_WEBHOOK_SECRET` is set, the caller must send header `X-Webhook-Secret` or `Authorization: Bearer <secret>`; otherwise the API returns 401. See [API.md](API.md).
 
 ---
 

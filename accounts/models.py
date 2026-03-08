@@ -18,6 +18,7 @@ from .constants import (
     DEFAULT_DOCUMENT_EXPIRY_DAYS,
     DOCUMENT_EXPIRY_NOTIFICATION_DAYS,
     INVITATION_EXPIRY_DAYS,
+    COMPANY_TASK_STATUS_CHOICES,
 )
 
 class CustomUserManager(BaseUserManager):
@@ -66,6 +67,17 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def get_full_name(self):
         return f"{self.first_name} {self.last_name}".strip() or self.email
+
+    def get_primary_company(self):
+        """Return the first company this user owns, or the first they are admin of. For use in marketplace (products, quotes)."""
+        owned = Company.objects.filter(owner=self, deleted_at__isnull=True).first()
+        if owned:
+            return owned
+        cu = CompanyUser.objects.filter(
+            user=self, role__in=['owner', 'admin'], deleted_at__isnull=True,
+            company__deleted_at__isnull=True
+        ).select_related('company').first()
+        return cu.company if cu else None
 
 class Company(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -178,6 +190,32 @@ class CompanyInvitation(models.Model):
         if not self.expires_at:
             self.expires_at = timezone.now() + timedelta(days=INVITATION_EXPIRY_DAYS)
         super().save(*args, **kwargs)
+
+
+class CompanyTask(models.Model):
+    """Task assigned to a company member, optionally linked to a tender or bid."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='accounts_tasks')
+    tender = models.ForeignKey('tenders.Tender', on_delete=models.CASCADE, null=True, blank=True, related_name='company_tasks')
+    bid = models.ForeignKey('bids.Bid', on_delete=models.CASCADE, null=True, blank=True, related_name='company_tasks')
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    assignee = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_tasks')
+    status = models.CharField(max_length=20, choices=COMPANY_TASK_STATUS_CHOICES, default='todo')
+    due_date = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='created_company_tasks')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['assignee', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.company.name})"
+
 
 class CompanyDocument(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='accounts_documents')

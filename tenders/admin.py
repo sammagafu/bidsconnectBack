@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from .models import (
     Category, SubCategory, ProcurementProcess, AgencyDetails, Tender, TenderRequiredDocument,
     TenderSubscription, NotificationPreference, TenderNotification, TenderStatusHistory,
-    TenderTechnicalSpecification  # NEW: Import new model
+    TenderTechnicalSpecification, TenderConversation, TenderMessage, PricingConfig,
 )
 
 @admin.register(Category)
@@ -37,9 +37,9 @@ class AgencyDetailsAdmin(admin.ModelAdmin):
 @admin.register(Tender)
 class TenderAdmin(admin.ModelAdmin):
     # UPDATED: Add new field to list_display and fields
-    list_display = ('id', 'title', 'reference_number', 'status', 'category_name', 'subcategory_name', 'procurement_process_name', 'agency_name', 'allow_alternative_delivery')
+    list_display = ('id', 'title', 'reference_number', 'status', 'category_name', 'subcategory_name', 'agency_name', 'email', 'allow_alternative_delivery')
     list_filter = ('status', 'category', 'subcategory', 'procurement_process', 'tender_type_country', 'tender_type_sector')
-    search_fields = ('title', 'reference_number', 'tenderdescription')
+    search_fields = ('title', 'reference_number', 'description')
     readonly_fields = ('created_by', 'created_at', 'updated_at', 'last_status_change')
 
     def clean(self):
@@ -164,3 +164,11 @@ class TenderTechnicalSpecificationAdmin(admin.ModelAdmin):
     def tender_title(self, obj):
         return obj.tender.title
     tender_title.short_description = 'Tender'
+
+
+@admin.register(PricingConfig)
+class PricingConfigAdmin(admin.ModelAdmin):
+    list_display = ('fee_type', 'amount', 'currency', 'cap', 'is_active', 'updated_at')
+    list_filter = ('fee_type', 'is_active')
+    search_fields = ('fee_type',)
+    readonly_fields = ('updated_at',)

@@ -8,7 +8,8 @@ from .models import (
     TenderExperienceRequirement, TenderPersonnelRequirement,
     TenderScheduleItem, TenderSubscription, NotificationPreference,
     TenderNotification, TenderStatusHistory,
-    TenderTechnicalSpecification, Award
+    TenderTechnicalSpecification, Award,
+    TenderConversation, TenderMessage, PricingConfig,
 )
 
 class SubCategorySerializer(serializers.ModelSerializer):
@@ -183,6 +184,7 @@ class TenderSerializer(serializers.ModelSerializer):
             'id', 'slug', 'title', 'reference_number', 'description',
             'category', 'category_id', 'subcategory', 'subcategory_id',
             'procurement_process', 'procurement_process_id', 'agency', 'agency_id',
+            'address', 'phone_number', 'email',
             'status', 'tender_type_country', 'tender_type_sector', 'currency',
             'tender_fees', 'source_of_funds', 'publication_date',
             'submission_deadline', 'validity_period_days', 'completion_period_days',
@@ -300,7 +302,7 @@ class TenderNotificationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TenderNotification
-        fields = ['id', 'subscription', 'tender', 'sent_at', 'is_sent', 'delivery_status', 'created_at']
+        fields = ['id', 'subscription', 'tender', 'sent_at', 'is_sent', 'is_read', 'delivery_status', 'created_at']
         read_only_fields = ['id', 'sent_at', 'is_sent', 'delivery_status', 'created_at']
 
 class TenderStatusHistorySerializer(serializers.ModelSerializer):
@@ -317,3 +319,39 @@ class AwardSerializer(serializers.ModelSerializer):
         model = Award
         fields = ['id', 'tender', 'awarded_bid', 'awarded_by', 'awarded_date', 'award_document', 'bid_report']
         read_only_fields = ['id']
+
+
+class TenderMessageSerializer(serializers.ModelSerializer):
+    sender_email = serializers.EmailField(source='sender.email', read_only=True)
+
+    class Meta:
+        model = TenderMessage
+        fields = ['id', 'conversation', 'sender', 'sender_email', 'content', 'created_at']
+        read_only_fields = ['id', 'sender', 'created_at']
+
+
+class TenderConversationSerializer(serializers.ModelSerializer):
+    tender_reference = serializers.CharField(source='tender.reference_number', read_only=True)
+    company_name = serializers.CharField(source='company.name', read_only=True)
+    message_count = serializers.SerializerMethodField()
+    tender_slug = serializers.SlugRelatedField(slug_field='slug', queryset=Tender.objects.all(), source='tender', write_only=True, required=True)
+
+    class Meta:
+        model = TenderConversation
+        fields = ['id', 'company', 'company_name', 'tender', 'tender_slug', 'tender_reference', 'message_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'company', 'created_at', 'updated_at']
+
+    def get_message_count(self, obj):
+        return getattr(obj, '_message_count', obj.messages.count())
+
+
+class PricingConfigSerializer(serializers.ModelSerializer):
+    effective_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PricingConfig
+        fields = ['id', 'fee_type', 'amount', 'currency', 'cap', 'effective_amount', 'is_active', 'updated_at']
+        read_only_fields = ['id', 'updated_at']
+
+    def get_effective_amount(self, obj):
+        return obj.effective_amount

@@ -1,4 +1,4 @@
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
@@ -22,6 +22,7 @@ from .serializers import (
     BidEvaluationSerializer, BidAuditLogSerializer
 )
 from tenders.models import Tender
+from accounts.models import CompanyUser
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
@@ -41,17 +42,41 @@ class IsBidderOrAdmin(permissions.BasePermission):
             return True
         return request.user == obj.bidder or request.user.is_staff
 
+
+class IsBidCompanyMemberOrAdmin(permissions.BasePermission):
+    """Allow staff or any member of the bid's company to read/write the bid and its nested resources."""
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        company = getattr(obj, 'company', None) or getattr(getattr(obj, 'bid', None), 'company', None)
+        if not company:
+            return False
+        if request.user.is_staff:
+            return True
+        return CompanyUser.objects.filter(
+            company=company, user=request.user, deleted_at__isnull=True
+        ).exists()
+
+
 class BidViewSet(viewsets.ModelViewSet):
     """
     CRUD for Bids, with submission action.
     """
     queryset = Bid.objects.all()
     serializer_class = BidSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(
+                company__accounts_company_users__user=self.request.user,
+                company__accounts_company_users__deleted_at__isnull=True
+            ).distinct()
         tender_id = self.request.query_params.get('tender')
         status = self.request.query_params.get('status')
         company_id = self.request.query_params.get('company_id')
@@ -115,11 +140,17 @@ class BidViewSet(viewsets.ModelViewSet):
         # Reuse validation logic
         validation_response = self.validate_submit(request, pk)
         if not validation_response.data['is_ready']:
-            return Response({'error': '; '.join(validation_response.data['errors'])}, status=400)
+            errors = validation_response.data['errors']
+            return Response(
+                {'detail': '; '.join(errors), 'errors': errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         with transaction.atomic():
             bid.status = 'submitted'
             bid.submission_date = timezone.now()
+            if not bid.bidder:
+                bid.bidder = request.user
             bid.save()
             BidAuditLog.objects.create(
                 bid=bid,
@@ -190,7 +221,7 @@ class BidViewSet(viewsets.ModelViewSet):
         p.drawString(100, height - 140, f"Bidder: {bid.company.name}")
         p.drawString(100, height - 160, f"Status: {bid.status.upper()}")
         p.drawString(100, height - 180, f"Total Price: {bid.total_price} {bid.currency}")
-        p.drawString(100, height - 200, f"Submission Date: {bid.submission_date}")
+        p.drawString(100, height - 200, f"Submission Date: {bid.submission_date.strftime('%Y-%m-%d %H:%M') if bid.submission_date else '—'}")
         p.drawString(100, height - 220, f"Generated on: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Documents section
@@ -226,7 +257,7 @@ class BidDocumentViewSet(viewsets.ModelViewSet):
     """
     queryset = BidDocument.objects.all()
     serializer_class = BidDocumentSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
@@ -251,7 +282,7 @@ class BidFinancialResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidFinancialResponse.objects.all()
     serializer_class = BidFinancialResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidFinancialResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -276,7 +307,7 @@ class BidTurnoverResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidTurnoverResponse.objects.all()
     serializer_class = BidTurnoverResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidTurnoverResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -301,7 +332,7 @@ class BidExperienceResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidExperienceResponse.objects.all()
     serializer_class = BidExperienceResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
@@ -327,7 +358,7 @@ class BidPersonnelResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidPersonnelResponse.objects.all()
     serializer_class = BidPersonnelResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidPersonnelResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -352,7 +383,7 @@ class BidOfficeResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidOfficeResponse.objects.all()
     serializer_class = BidOfficeResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidOfficeResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -376,7 +407,7 @@ class BidSourceResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidSourceResponse.objects.all()
     serializer_class = BidSourceResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidSourceResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -401,7 +432,7 @@ class BidLitigationResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidLitigationResponse.objects.all()
     serializer_class = BidLitigationResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidLitigationResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -425,7 +456,7 @@ class BidScheduleResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidScheduleResponse.objects.all()
     serializer_class = BidScheduleResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidScheduleResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))
@@ -449,7 +480,7 @@ class BidTechnicalResponseViewSet(viewsets.ModelViewSet):
     """
     queryset = BidTechnicalResponse.objects.all()
     serializer_class = BidTechnicalResponseSerializer
-    permission_classes = [IsBidderOrAdmin]
+    permission_classes = [IsBidCompanyMemberOrAdmin]
 
     def get_queryset(self):
         return BidTechnicalResponse.objects.filter(bid_id=self.kwargs.get('bid_pk'))

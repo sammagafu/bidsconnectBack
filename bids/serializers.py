@@ -167,8 +167,20 @@ class BidSerializer(serializers.ModelSerializer):
     tender = TenderSerializer(read_only=True)  # Nested for read
     tender_id = serializers.PrimaryKeyRelatedField(queryset=Tender.objects.all(), source='tender', write_only=True)  # PK for write
     bidder = serializers.StringRelatedField(read_only=True)
-    company_id = serializers.PrimaryKeyRelatedField(queryset=Company.objects.all(), source='company', write_only=True)  # PK for write
+    company_id = serializers.PrimaryKeyRelatedField(queryset=Company.objects.none(), source='company', write_only=True)  # Set in __init__ from context
     bids_documents = BidDocumentSerializer(many=True, required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            self.fields['company_id'].queryset = Company.objects.filter(
+                accounts_company_users__user=request.user,
+                accounts_company_users__deleted_at__isnull=True,
+                deleted_at__isnull=True
+            ).distinct()
+        else:
+            self.fields['company_id'].queryset = Company.objects.none()
     bids_financial_responses = BidFinancialResponseSerializer(many=True, required=False)
     bids_turnover_responses = BidTurnoverResponseSerializer(many=True, required=False)
     bids_experience_responses = BidExperienceResponseSerializer(many=True, required=False)
@@ -194,8 +206,14 @@ class BidSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         tender = data.get('tender')
-        if tender.submission_deadline < timezone.now():
-            raise ValidationError("Cannot create/update bid: Tender submission deadline has passed.")
+        company = data.get('company')
+        if tender and tender.submission_deadline < timezone.now():
+            raise serializers.ValidationError("Cannot create/update bid: Tender submission deadline has passed.")
+        if tender and company and not self.instance:
+            if Bid.objects.filter(tender=tender, company=company).exists():
+                raise serializers.ValidationError(
+                    {"detail": "Your company already has a bid for this tender."}
+                )
         return data
 
     def create(self, validated_data):

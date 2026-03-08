@@ -329,6 +329,9 @@ Content-Type: application/json
   "title": "Supply of Office Equipment",
   "reference_number": "TND-2024-001",
   "description": "Full description here.",
+  "address": "P.O. Box 123, Dar es Salaam",
+  "phone_number": "+255 22 123 4567",
+  "email": "tender@agency.go.tz",
   "category_id": 1,
   "subcategory_id": 2,
   "procurement_process_id": 1,
@@ -362,7 +365,8 @@ Content-Type: application/json
 }
 ```
 
-- If `tender_securing_type` is `"Tender Security"`, provide either `tender_security_percentage` or `tender_security_amount`.
+- **Bid Security:** Two types — (1) `Tender Security` = amount or percentage; (2) `Tender Securing Declaration` = document. If `tender_securing_type` is `"Tender Security"`, provide either `tender_security_percentage` or `tender_security_amount`.
+- **Tender contact:** Optional `address`, `phone_number`, `email`. **Participation fee:** `tender_fees` with `currency` (TZS or USD).
 - For file uploads (e.g. tender document), use **multipart/form-data** and the same endpoint if the API supports it.
 
 ---

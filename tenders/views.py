@@ -16,11 +16,12 @@ from .models import (
     TenderPersonnelRequirement, TenderScheduleItem,
     TenderTechnicalSpecification, TenderSubscription,
     NotificationPreference, TenderNotification, TenderStatusHistory,
-    Award
+    Award, TenderConversation, TenderMessage, PricingConfig,
 )
 
 from bids.models import Bid
 
+from accounts.models import CompanyUser
 from .serializers import (
     CategorySerializer, SubCategorySerializer, CategoryWithSubcategoriesSerializer,
     ProcurementProcessSerializer, AgencyDetailsSerializer,
@@ -29,7 +30,9 @@ from .serializers import (
     TenderExperienceRequirementSerializer, TenderPersonnelRequirementSerializer,
     TenderScheduleItemSerializer, TenderTechnicalSpecificationSerializer,
     TenderSubscriptionSerializer, NotificationPreferenceSerializer,
-    TenderNotificationSerializer, TenderStatusHistorySerializer
+    TenderNotificationSerializer, TenderStatusHistorySerializer,
+    TenderConversationSerializer, TenderMessageSerializer,
+    PricingConfigSerializer,
 )
 
 class IsAdminOrReadOnly(permissions.BasePermission):
@@ -37,6 +40,24 @@ class IsAdminOrReadOnly(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
         return request.user and request.user.is_staff
+
+
+class CanCreateTender(permissions.BasePermission):
+    """Allow create/update tenders only for staff or users who are owner/admin of at least one company."""
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.user.is_staff:
+            return True
+        return CompanyUser.objects.filter(
+            user=request.user,
+            role__in=['owner', 'admin'],
+            deleted_at__isnull=True,
+            company__deleted_at__isnull=True
+        ).exists()
+
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -80,7 +101,7 @@ class AgencyDetailsViewSet(viewsets.ModelViewSet):
 class TenderViewSet(viewsets.ModelViewSet):
     queryset = Tender.objects.all()
     serializer_class = TenderSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, CanCreateTender]
     lookup_field = 'slug'
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
@@ -303,10 +324,11 @@ class NotificationPreferenceViewSet(viewsets.ModelViewSet):
             raise ValidationError("Notification preferences already exist for this user.")
         serializer.save(user=self.request.user)
 
-class TenderNotificationViewSet(viewsets.ReadOnlyModelViewSet):
+class TenderNotificationViewSet(viewsets.ReadOnlyModelViewSet, viewsets.mixins.UpdateModelMixin):
     queryset = TenderNotification.objects.all()
     serializer_class = TenderNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'head', 'options', 'patch', 'put']
 
     def get_queryset(self):
         return self.queryset.filter(subscription__user=self.request.user)
@@ -323,3 +345,118 @@ class TenderStatusHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             tender = get_object_or_404(Tender, slug=tender_slug)
             queryset = queryset.filter(tender=tender)
         return queryset
+
+
+class TenderConversationViewSet(viewsets.ModelViewSet):
+    """
+    Team conversation per company per tender. List/create with ?tender=<slug>.
+    Only company members can access their company's conversation.
+    """
+    serializer_class = TenderConversationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        from django.db.models import Count
+        company_ids = CompanyUser.objects.filter(
+            user=self.request.user, deleted_at__isnull=True
+        ).values_list('company_id', flat=True)
+        qs = TenderConversation.objects.filter(company_id__in=company_ids).select_related(
+            'company', 'tender'
+        ).annotate(_message_count=Count('messages'))
+        tender_slug = self.request.query_params.get('tender')
+        if tender_slug:
+            qs = qs.filter(tender__slug=tender_slug)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        company = request.user.get_primary_company()
+        if not company:
+            return Response(
+                {"detail": "You must belong to a company to start a tender conversation."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        tender = serializer.validated_data.get('tender')
+        if not tender:
+            return Response(
+                {"tender_slug": "This field is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        conv, created = TenderConversation.objects.get_or_create(
+            company=company, tender=tender,
+            defaults={'company': company, 'tender': tender}
+        )
+        ser = TenderConversationSerializer(conv)
+        return Response(ser.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class TenderMessageViewSet(viewsets.ModelViewSet):
+    """
+    Messages in a tender conversation. Only company members of the conversation can list/post.
+    """
+    serializer_class = TenderMessageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        conv_id = self.kwargs.get('conversation_pk')
+        conv = get_object_or_404(TenderConversation, pk=conv_id)
+        if not CompanyUser.objects.filter(company=conv.company, user=self.request.user, deleted_at__isnull=True).exists():
+            return TenderMessage.objects.none()
+        return TenderMessage.objects.filter(conversation_id=conv_id).select_related('sender').order_by('created_at')
+
+    def perform_create(self, serializer):
+        conv_id = self.kwargs.get('conversation_pk')
+        conv = get_object_or_404(TenderConversation, pk=conv_id)
+        from rest_framework.exceptions import PermissionDenied
+        if not CompanyUser.objects.filter(company=conv.company, user=self.request.user, deleted_at__isnull=True).exists():
+            raise PermissionDenied("You are not a member of this conversation's company.")
+        serializer.save(conversation=conv, sender=self.request.user)
+
+
+class IsAdminOrAuthenticatedReadOnly(permissions.BasePermission):
+    """Allow GET for any authenticated user; allow write for staff only."""
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.is_staff
+
+
+class PricingConfigViewSet(viewsets.ModelViewSet):
+    """
+    List/retrieve platform pricing (tender document fee, tender summary one-time fee).
+    Staff can create/update/delete. Used for configurable price caps.
+    """
+    queryset = PricingConfig.objects.all()
+    serializer_class = PricingConfigSerializer
+    permission_classes = [IsAdminOrAuthenticatedReadOnly]
+    lookup_field = 'fee_type'
+    lookup_value_regex = '[^/]+'
+
+    def get_queryset(self):
+        qs = PricingConfig.objects.all()
+        if not (self.request.user and self.request.user.is_staff):
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def perform_create(self, serializer):
+        if not self.request.user.is_staff:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only staff can create pricing config.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        if not self.request.user.is_staff:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only staff can update pricing config.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.request.user.is_staff:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only staff can delete pricing config.")
+        instance.is_active = False
+        instance.save()

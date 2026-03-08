@@ -24,7 +24,7 @@ class IsCompanyOwner(permissions.BasePermission):
 
 class IsCompanyAdminOrOwner(permissions.BasePermission):
     def has_permission(self, request, view):
-        cid = view.kwargs.get('company_id')
+        cid = view.kwargs.get('company_id') or view.kwargs.get('company_pk')
         if cid:
             comp = get_object_or_404(Company, id=cid, deleted_at__isnull=True)
             return request.user.is_authenticated and CompanyUser.objects.filter(
@@ -45,7 +45,7 @@ class IsCompanyAdminOrOwner(permissions.BasePermission):
 
 class IsCompanyMember(permissions.BasePermission):
     def has_permission(self, request, view):
-        cid = view.kwargs.get('company_id')
+        cid = view.kwargs.get('company_id') or view.kwargs.get('company_pk')
         if cid:
             return (
                 request.user.is_authenticated and

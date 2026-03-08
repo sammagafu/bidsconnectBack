@@ -7,6 +7,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
     """
     List and retrieve payments for the authenticated user.
     Create sets user to request.user.
+    Note: No payment gateway integration yet; status is set by the client.
+    For production, integrate provider webhooks and set status from callbacks.
     """
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]

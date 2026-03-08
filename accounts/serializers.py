@@ -9,7 +9,7 @@ from tenders.models import Tender
 from bids.serializers import BidSerializer
 
 from .models import (
-    CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument,
+    CustomUser, Company, CompanyUser, CompanyInvitation, CompanyTask, CompanyDocument,
     CompanyOffice, CompanyCertification, CompanySourceOfFund,
     CompanyAnnualTurnover, CompanyFinancialStatement, CompanyLitigation,
     CompanyPersonnel, CompanyExperience, AuditLog
@@ -106,6 +106,21 @@ class CompanyInvitationSerializer(serializers.ModelSerializer):
         model = CompanyInvitation
         fields = ['id', 'invited_email', 'role', 'accepted', 'created_at', 'expires_at', 'invited_by']
         read_only_fields = ['id', 'accepted', 'created_at', 'expires_at', 'invited_by']
+
+
+class CompanyTaskSerializer(serializers.ModelSerializer):
+    assignee_email = serializers.EmailField(source='assignee.email', read_only=True)
+    created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
+
+    class Meta:
+        model = CompanyTask
+        fields = [
+            'id', 'company', 'tender', 'bid', 'title', 'description',
+            'assignee', 'assignee_email', 'status', 'due_date',
+            'created_by', 'created_by_email', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'company', 'created_at', 'updated_at', 'created_by']
+
 
 class CompanyDocumentSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.HiddenField(default=serializers.CurrentUserDefault())

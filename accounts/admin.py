@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils import timezone
-from .models import CustomUser, Company, CompanyUser, CompanyInvitation, CompanyDocument, AuditLog
+from .models import CustomUser, Company, CompanyUser, CompanyInvitation, CompanyTask, CompanyDocument, AuditLog
 
 # CustomUser Admin
 class CustomUserAdmin(BaseUserAdmin):
@@ -68,6 +68,17 @@ class CompanyInvitationAdmin(admin.ModelAdmin):
         ('Status', {'fields': ('accepted', 'token', 'created_at', 'expires_at')}),
     )
     readonly_fields = ('token', 'created_at')
+
+
+@admin.register(CompanyTask)
+class CompanyTaskAdmin(admin.ModelAdmin):
+    list_display = ('title', 'company', 'assignee', 'status', 'tender', 'due_date', 'created_by', 'created_at')
+    list_filter = ('status', 'company', 'created_at')
+    search_fields = ('title', 'company__name', 'assignee__email')
+    raw_id_fields = ('company', 'tender', 'bid', 'assignee', 'created_by')
+    date_hierarchy = 'created_at'
+    ordering = ('-created_at',)
+
 
 # CompanyDocument Admin
 @admin.register(CompanyDocument)

@@ -1,6 +1,7 @@
 import csv
 import logging
 import os
+import secrets
 from datetime import timedelta
 from io import StringIO
 
@@ -18,12 +19,14 @@ from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
+from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import (
     CustomUser,
     Company,
     CompanyUser,
     CompanyInvitation,
+    CompanyTask,
     CompanyDocument,
     CompanyOffice,
     CompanyCertification,
@@ -42,6 +45,7 @@ from .serializers import (
     CompanySerializer,
     CompanyUserSerializer,
     CompanyInvitationSerializer,
+    CompanyTaskSerializer,
     CompanyDocumentSerializer,
     CompanyOfficeSerializer,
     CompanyCertificationSerializer,
@@ -186,7 +190,7 @@ class CompanyInvitationViewSet(viewsets.ModelViewSet):
             send_mail(
                 'Company Invitation',
                 f'You are invited to join {company.name}. Accept: {settings.SITE_URL}{accept_url}',
-                settings.DEFAULT_FROM_EMAIL,
+                getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@bidsconnect.co.tz'),
                 [invited_email],
                 fail_silently=True
             )
@@ -198,6 +202,64 @@ class CompanyInvitationViewSet(viewsets.ModelViewSet):
                     'invited_email': invited_email
                 }
             )
+
+
+class CompanyTaskViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for CompanyTask; company members can list/retrieve; admin/owner create/update/delete;
+    assignee can PATCH their own task (e.g. status).
+    """
+    serializer_class = CompanyTaskSerializer
+    permission_classes = [permissions.IsAuthenticated, IsCompanyMember]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'assignee', 'tender', 'bid']
+
+    def get_queryset(self):
+        return CompanyTask.objects.filter(
+            company_id=self.kwargs['company_pk'],
+            company__deleted_at__isnull=True
+        ).select_related('assignee', 'created_by', 'tender', 'bid')
+
+    def get_permissions(self):
+        if self.action in ('create', 'destroy'):
+            return [permissions.IsAuthenticated(), IsCompanyAdminOrOwner()]
+        return [permissions.IsAuthenticated(), IsCompanyMember()]
+    
+    def perform_create(self, serializer):
+        company = get_object_or_404(Company, pk=self.kwargs['company_pk'], deleted_at__isnull=True)
+        if not CompanyUser.objects.filter(company=company, user=self.request.user, role__in=['owner', 'admin']).exists():
+            raise PermissionDenied("Only company owner or admin can create tasks.")
+        assignee = serializer.validated_data.get('assignee')
+        if assignee and not CompanyUser.objects.filter(company=company, user=assignee, deleted_at__isnull=True).exists():
+            raise ValidationError("Assignee must be a member of this company.")
+        with transaction.atomic():
+            task = serializer.save(company=company, created_by=self.request.user)
+            AuditLog.objects.create(
+                action='company_task_created',
+                user=self.request.user,
+                details={'company_id': str(company.id), 'task_id': task.id, 'title': task.title}
+            )
+
+    def perform_update(self, serializer):
+        task = serializer.instance
+        company = task.company
+        is_admin = CompanyUser.objects.filter(company=company, user=self.request.user, role__in=['owner', 'admin']).exists()
+        is_assignee = task.assignee_id == self.request.user.id
+        if not (is_admin or is_assignee):
+            raise PermissionDenied("Only company admin/owner or the assignee can update this task.")
+        if not is_admin and is_assignee:
+            # Assignee can only update status (and maybe due_date)
+            allowed = {'status', 'due_date'}
+            if set(serializer.validated_data.keys()) - allowed:
+                raise PermissionDenied("Assignees can only update status and due_date.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        company = instance.company
+        if not CompanyUser.objects.filter(company=company, user=self.request.user, role__in=['owner', 'admin']).exists():
+            raise PermissionDenied("Only company owner or admin can delete tasks.")
+        super().perform_destroy(instance)
+
 
 class CompanyDocumentViewSet(viewsets.ModelViewSet):
     """
@@ -627,10 +689,30 @@ class DocumentExpiryWebhookView(APIView):
     """
     POST /accounts/webhooks/documents/expiry/ handles document expiry webhooks.
     Accepts JSON: { "document_id": "<uuid>" } to process one doc, or { "event": "check_expiry" } to list expiring.
+    When DOCUMENT_EXPIRY_WEBHOOK_SECRET is set, request must include header
+    X-Webhook-Secret: <secret> or Authorization: Bearer <secret>.
     """
     permission_classes = [permissions.AllowAny]
 
+    def _validate_webhook_secret(self, request):
+        secret = getattr(settings, 'DOCUMENT_EXPIRY_WEBHOOK_SECRET', '') or ''
+        if not secret:
+            return True
+        provided = request.headers.get('X-Webhook-Secret') or ''
+        if not provided and request.auth is None:
+            auth_header = request.headers.get('Authorization')
+            if auth_header and auth_header.startswith('Bearer '):
+                provided = auth_header[7:].strip()
+        if not provided or not secrets.compare_digest(secret, provided):
+            return False
+        return True
+
     def post(self, request):
+        if not self._validate_webhook_secret(request):
+            return Response(
+                {"detail": "Invalid or missing webhook secret."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         data = getattr(request, 'data', None) or {}
         if not isinstance(data, dict):
             data = {}
@@ -691,6 +773,7 @@ class CompanyDashboardView(APIView):
 class InvitationAcceptanceView(APIView):
     """
     POST /accounts/invitations/accept/{token}/ endpoint to accept invitations.
+    Requires the logged-in user's email to match the invitation's invited_email.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -701,6 +784,24 @@ class InvitationAcceptanceView(APIView):
             expires_at__gt=timezone.now(),
             accepted=False
         )
+        if invitation.company.deleted_at is not None:
+            return Response(
+                {"detail": "This company no longer exists."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        if request.user.email.lower() != invitation.invited_email.lower():
+            return Response(
+                {"detail": "This invitation was sent to a different email address."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        current_count = invitation.company.accounts_company_users.filter(
+            deleted_at__isnull=True
+        ).count()
+        if current_count >= MAX_COMPANY_USERS:
+            return Response(
+                {"detail": "Company user limit reached."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         with transaction.atomic():
             CompanyUser.objects.create(
                 company=invitation.company,

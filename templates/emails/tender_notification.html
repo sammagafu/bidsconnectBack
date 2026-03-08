@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Tender Published</title>
+</head>
+<body style="font-family: sans-serif; line-height: 1.5; color: #333; max-width: 600px; margin: 0 auto; padding: 1rem;">
+    <h2 style="color: #0d47a1;">New Tender Published</h2>
+    <p>Hello {% if user.first_name %}{{ user.first_name }}{% else %}there{% endif %},</p>
+    <p>A new tender matching your subscription has been published:</p>
+    <ul>
+        <li><strong>Title:</strong> {{ tender.title }}</li>
+        <li><strong>Reference:</strong> {{ tender.reference_number }}</li>
+        <li><strong>Deadline:</strong> {{ tender.submission_deadline|date:"F j, Y H:i" }}</li>
+    </ul>
+    <p>{{ tender.description|default:"No additional description."|truncatewords:50 }}</p>
+    <p>Log in to BidsConnect to view full details and submit a bid.</p>
+    <p style="margin-top: 2rem; color: #666; font-size: 0.9rem;">— BidsConnect</p>
+</body>
+</html>
