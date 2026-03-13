@@ -64,8 +64,17 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 |--------|----------|------|-------------|
 | GET | `/accounts/companies/{company_pk}/dashboard/` | Yes | Company dashboard summary |
 | GET | `/accounts/companies/{company_pk}/documents/export/` | Yes (owner) | CSV export of documents |
-| POST | `/accounts/invitations/accept/{token}/` | Yes | Accept invitation |
-| POST | `/accounts/webhooks/documents/expiry/` | Webhook secret | Document expiry webhook (body: `document_id`, `event`). When `DOCUMENT_EXPIRY_WEBHOOK_SECRET` is set, send header `X-Webhook-Secret: <secret>` or `Authorization: Bearer <secret>`; otherwise **401** is returned. |
+| POST | `/accounts/invitations/accept/{token}/` | Yes | Accept invitation (see [Invitation accept](#invitation-accept) below) |
+| POST | `/accounts/webhooks/documents/expiry/` | Webhook secret | Document expiry webhook (body: `document_id`, `event`). When `DOCUMENT_EXPIRY_WEBHOOK_SECRET` is set, send header `X-Webhook-Secret: <secret>` or `Authorization: Bearer <secret>`; otherwise **401** is returned. See [Document expiry webhook](#document-expiry-webhook). |
+
+### Invitation accept
+
+**POST** `/api/v1/accounts/invitations/accept/<token>/`  
+**Auth:** Required (logged-in user).
+
+- The logged-in user’s email **must** match the invitation’s `invited_email` (case-insensitive). If not, the API returns **403** with `{"detail": "This invitation was sent to a different email address."}`.
+- If the company has already reached the maximum number of members (`MAX_COMPANY_USERS`), the API returns **400** with `{"detail": "Company user limit reached."}`.
+- On success, a `CompanyUser` is created with the invited role and the invitation is marked accepted. Response: `{"detail": "Successfully joined {company name}."}`
 
 ### Audit logs
 
@@ -89,6 +98,8 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 | GET/POST | `/tenders/agencies/` | Agencies |
 
 ### Tenders
+
+**Create permission:** Only **staff** or users who are **owner** or **admin** of at least one company can create or update tenders. Other authenticated users get 403 on POST/PUT/PATCH.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -123,7 +134,8 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 | GET/POST | `/tenders/tender-technical-specs/` | Technical specs |
 | GET/POST | `/tenders/subscriptions/` | Tender subscriptions |
 | GET/PUT/PATCH | `/tenders/notification-preferences/` | Notification preferences |
-| GET | `/tenders/tender-notifications/` | Tender notifications (read-only) |
+| GET | `/tenders/tender-notifications/` | List tender notifications for the current user (via subscription). Each has `is_read`. |
+| GET/PUT/PATCH | `/tenders/tender-notifications/{id}/` | Retrieve or update (e.g. PATCH `{"is_read": true}` to mark as read). User sees only their own. |
 | GET | `/tenders/tender-status-history/` | Tender status history (read-only) |
 | GET/POST | `/tenders/conversations/` | List/create tender conversation (team chat). Query: `?tender=<slug>`. Body: `{"tender_slug": "..."}` |
 | GET | `/tenders/conversations/{id}/` | Conversation detail |
@@ -136,11 +148,18 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 
 ## Bids (`/api/v1/bids/`)
 
+**List scoping:** Non-staff users see only bids for **companies they belong to**. Staff see all bids. Optional filters: `?tender=`, `?status=`, `?company_id=` (further narrows to that company; user must be a member).
+
+**Create:** `company_id` must be a company the user is a member of; otherwise validation returns 400. Only one bid per (tender, company); duplicate returns 400 with `{"detail": "Your company already has a bid for this tender."}`.
+
+**Permissions:** Any **company member** of the bid’s company (or staff) can create, read, and update draft bids and nested resources (documents, responses). Submit is allowed for company members; evaluator actions remain staff-only.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET/POST | `/bids/` | List / create bids |
 | GET/PUT/PATCH/DELETE | `/bids/{id}/` | Bid CRUD |
 | POST | `/bids/{id}/submit/` | Submit bid |
+| GET | `/bids/{id}/validate-submit/` | Pre-submit validation: returns `is_ready` and `errors` list |
 
 ### Per-bid resources (`/bids/{bid_pk}/`)
 
@@ -221,12 +240,14 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | GET | `/notifications/` | Yes | Unified in-app notifications (tender + marketplace). Query: `?type=`, `?is_read=`, `?page=`, `?page_size=` |
-| PATCH | `/notifications/{id}/` | Yes | Mark notification as read (body: `{"is_read": true}`). Supported for marketplace notifications. |
+| PATCH | `/notifications/{id}/` | Yes | Mark marketplace notification as read (body: `{"is_read": true}`). For **tender** notifications, use `PATCH /tenders/tender-notifications/{id}/` with `{"is_read": true}`. |
 | GET | `/notifications/ping/` | No | App status |
 | GET | `/analytics/` | Yes | Comprehensive dashboard: tenders, bids, marketplace, accounts, payments. Query: `?scope=platform\|company`, `?company_id=` (required if scope=company), `?period=30d` |
 | GET | `/analytics/ping/` | No | App status |
 
 **Analytics response (GET /analytics/):** `stats` contains `tenders` (total, by_status, optional recent_*_30d), `bids` (total, by_status, optional recent_submitted_30d), `marketplace` (products, rfq, quotes, reviews), `accounts` (companies_total/users_total or company_members), `payments` (total, by_status).
+
+**Company scope:** When `scope=company` and `company_id` is provided, the user **must** be a member of that company; otherwise the API returns **403** with `{"detail": "You do not have access to this company."}`.
 
 ---
 
@@ -234,12 +255,19 @@ All account endpoints (except auth above) are under `/api/v1/accounts/`. Nested 
 
 **POST** `/api/v1/accounts/webhooks/documents/expiry/`
 
-Body (JSON):
+**Authentication:** When the setting `DOCUMENT_EXPIRY_WEBHOOK_SECRET` is set (e.g. in production), the request **must** include one of:
+
+- Header: `X-Webhook-Secret: <secret>`
+- Header: `Authorization: Bearer <secret>`
+
+If the secret is set and the header is missing or does not match, the API returns **401** with `{"detail": "Invalid or missing webhook secret."}`. When the secret is not set (e.g. dev), no header is required.
+
+**Body (JSON):**
 
 - `document_id` (optional) — UUID of company document to process; if expiring soon, owner gets email.
-- `event` (optional) — `"check_expiry"` returns up to 100 documents expiring in the next 30 days.
+- `event` (optional) — `"check_expiry"` processes up to 100 documents expiring in the next 30 days.
 
-Response:
+**Response:**
 
 ```json
 {

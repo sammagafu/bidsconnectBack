@@ -73,7 +73,7 @@ Copy `.env.example` to `.env` and set as needed:
 | `MEDIA_ROOT` | Uploaded files path | `BASE_DIR/media` |
 | `EMAIL_BACKEND` | Email backend | `console` (dev) |
 | `DEFAULT_FROM_EMAIL` | Sender for emails | `noreply@bidsconnect.co.tz` |
-| `SITE_URL` | Base URL for links (e.g. invitations) | — |
+| `SITE_URL` | Base URL for links (invitations, tender notification/digest “View” buttons) | — |
 
 **Email in production:** Set `EMAIL_BACKEND` to `django.core.mail.backends.smtp.EmailBackend` and configure `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL`. See `.env.example` for an example.
 
@@ -99,7 +99,7 @@ New tests cover: invitation accept (email match and company limit), document exp
 
 | Document | Description |
 |----------|-------------|
-| [API Documentation](docs/API.md) | All API endpoints, auth, request/response details |
+| [API Documentation](docs/API.md) | All API endpoints, auth, permissions, error conventions, webhook auth |
 | [System Flow](docs/SYSTEM_FLOW.md) | User journeys, tender–bid flow, data flow diagrams |
 | [BidsConnect Spec](docs/BIDS_CONNECT_SPEC.md) | Product requirements, tender/bid rules, fees, user journey |
 | [User Onboarding & Teams](docs/USER_ONBOARDING_AND_TEAMS.md) | Onboarding, company members, roles, company tasks, tender conversations |

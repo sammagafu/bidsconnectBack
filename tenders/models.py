@@ -247,7 +247,8 @@ class Tender(models.Model):
             user = sub.user
             pref = getattr(user, 'notification_preference', None)
             if pref and pref.email_notifications:
-                context = {'tender': self, 'user': user}
+                site_url = getattr(settings, 'SITE_URL', '').rstrip('/')
+                context = {'tender': self, 'user': user, 'site_url': site_url}
                 html_message = render_to_string('emails/tender_notification.html', context)
                 plain_message = f"New Tender: {self.title}\nDescription: {self.description}"
                 send_mail(

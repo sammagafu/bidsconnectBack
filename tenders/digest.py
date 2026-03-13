@@ -99,10 +99,12 @@ def build_and_send_tender_digests(frequency):
             lines.append({
                 'title': t.title,
                 'reference_number': t.reference_number,
+                'slug': getattr(t, 'slug', ''),
                 'publication_date': pub,
                 'submission_deadline': deadline,
                 'category': t.category.name if t.category else '—',
             })
+        site_url = getattr(settings, 'SITE_URL', '').rstrip('/')
         plain_message = (
             f"Hello {user.get_full_name() or user.email},\n\n"
             f"Here is your {frequency} tender digest for {date_range}:\n\n"
@@ -117,6 +119,7 @@ def build_and_send_tender_digests(frequency):
             'frequency': frequency,
             'date_range': date_range,
             'tenders': lines,
+            'site_url': site_url,
         }
         html_message = None
         try:

@@ -1,44 +1,87 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tender Digest</title>
-    <style>
-        body { font-family: sans-serif; line-height: 1.5; color: #333; max-width: 600px; margin: 0 auto; padding: 1rem; }
-        h2 { color: #0d47a1; }
-        table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-        th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
-        th { background: #f5f5f5; }
-        .meta { color: #666; font-size: 0.9rem; }
-        .footer { margin-top: 2rem; color: #666; font-size: 0.9rem; }
-    </style>
+    <title>Your Tender Digest — BidsConnect</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
 </head>
-<body>
-    <h2>Your {{ frequency|capfirst }} Tender Digest</h2>
-    <p>Hello {% if user.first_name %}{{ user.first_name }}{% else %}there{% endif %},</p>
-    <p>Here are new tenders matching your subscriptions for <strong>{{ date_range }}</strong>:</p>
-    <table>
-        <thead>
-            <tr>
-                <th>Title</th>
-                <th>Reference</th>
-                <th>Deadline</th>
-                <th>Category</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for t in tenders %}
-            <tr>
-                <td>{{ t.title }}</td>
-                <td>{{ t.reference_number }}</td>
-                <td>{{ t.submission_deadline }}</td>
-                <td>{{ t.category }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f6f8; line-height: 1.6; color: #1a1a2e;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f6f8; padding: 24px 16px;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); overflow: hidden;">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%); padding: 24px 28px; text-align: center;">
+                            <h1 style="margin: 0; font-size: 1.35rem; font-weight: 700; color: #ffffff; letter-spacing: -0.02em;">BidsConnect</h1>
+                            <p style="margin: 6px 0 0 0; font-size: 0.875rem; color: rgba(255,255,255,0.9);">Tender &amp; Bidding Platform</p>
+                        </td>
+                    </tr>
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 28px;">
+                            <h2 style="margin: 0 0 8px 0; font-size: 1.25rem; font-weight: 600; color: #0d47a1;">Your {{ frequency|capfirst }} Tender Digest</h2>
+                            <p style="margin: 0 0 6px 0; font-size: 0.9375rem; color: #64748b;">Hello {% if user.first_name %}{{ user.first_name }}{% else %}there{% endif %},</p>
+                            <p style="margin: 0 0 20px 0; font-size: 0.9375rem; color: #334155;">New tenders matching your subscriptions for <strong>{{ date_range }}</strong>:</p>
+
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+                                <thead>
+                                    <tr>
+                                        <th style="padding: 12px 14px; background-color: #0d47a1; color: #ffffff; font-size: 0.75rem; font-weight: 600; text-align: left; text-transform: uppercase;">Title</th>
+                                        <th style="padding: 12px 14px; background-color: #0d47a1; color: #ffffff; font-size: 0.75rem; font-weight: 600; text-align: left; text-transform: uppercase;">Reference</th>
+                                        <th style="padding: 12px 14px; background-color: #0d47a1; color: #ffffff; font-size: 0.75rem; font-weight: 600; text-align: left; text-transform: uppercase;">Deadline</th>
+                                        <th style="padding: 12px 14px; background-color: #0d47a1; color: #ffffff; font-size: 0.75rem; font-weight: 600; text-align: left; text-transform: uppercase;">Category</th>
+                                        {% if site_url %}<th style="padding: 12px 14px; background-color: #0d47a1; color: #ffffff; font-size: 0.75rem; font-weight: 600; text-align: center; text-transform: uppercase;">View</th>{% endif %}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for t in tenders %}
+                                    <tr style="background-color: {% if forloop.counter|divisibleby:2 %}#f8fafc{% else %}#ffffff{% endif %};">
+                                        <td style="padding: 12px 14px; font-size: 0.9375rem; color: #1e293b; border-bottom: 1px solid #e2e8f0;">{{ t.title }}</td>
+                                        <td style="padding: 12px 14px; font-size: 0.875rem; color: #475569; border-bottom: 1px solid #e2e8f0;">{{ t.reference_number }}</td>
+                                        <td style="padding: 12px 14px; font-size: 0.875rem; color: #475569; border-bottom: 1px solid #e2e8f0;">{{ t.submission_deadline }}</td>
+                                        <td style="padding: 12px 14px; font-size: 0.875rem; color: #475569; border-bottom: 1px solid #e2e8f0;">{{ t.category }}</td>
+                                        {% if site_url %}
+                                        <td style="padding: 12px 14px; border-bottom: 1px solid #e2e8f0; text-align: center;">
+                                            {% if t.slug %}
+                                            <a href="{{ site_url }}/tenders/{{ t.slug }}/" style="display: inline-block; padding: 6px 12px; background-color: #0d47a1; color: #ffffff; font-size: 0.8125rem; font-weight: 500; text-decoration: none; border-radius: 6px;">View</a>
+                                            {% else %}—{% endif %}
+                                        </td>
+                                        {% endif %}
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+
+                            {% if site_url %}
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top: 20px;">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0;">
+                                        <a href="{{ site_url }}/tenders/" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%); color: #ffffff; font-size: 0.9375rem; font-weight: 600; text-decoration: none; border-radius: 8px;">View All Tenders</a>
+                                    </td>
+                                </tr>
+                            </table>
+                            {% else %}
+                            <p style="margin: 20px 0 0 0; font-size: 0.9375rem; color: #475569;">Log in to BidsConnect to view full details and submit a bid.</p>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 20px 28px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
+                            <p style="margin: 0; font-size: 0.8125rem; color: #64748b;">— BidsConnect · Tanzania Tender &amp; Bidding Platform</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
     </table>
-    <p>Log in to BidsConnect to view full details and submit a bid.</p>
-    <p class="footer">— BidsConnect</p>
 </body>
 </html>

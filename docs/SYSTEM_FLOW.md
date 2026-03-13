@@ -91,8 +91,10 @@ sequenceDiagram
 
 1. User registers → logs in → gets JWT.
 2. User creates a company (becomes owner).
-3. Owner invites users → invitee accepts → becomes company user.
+3. Owner invites users by email → invitee opens link and **must be logged in with the same email** to accept; otherwise 403. Company user limit applies (400 if at cap).
 4. Company users upload documents (and manage offices, certifications, personnel, etc.).
+
+See [API.md](API.md) for invitation accept and [USER_ONBOARDING_AND_TEAMS.md](USER_ONBOARDING_AND_TEAMS.md) for details.
 
 ---
 

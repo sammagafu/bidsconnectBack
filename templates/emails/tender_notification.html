@@ -1,21 +1,75 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>New Tender Published</title>
+    <title>New Tender Published — BidsConnect</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
 </head>
-<body style="font-family: sans-serif; line-height: 1.5; color: #333; max-width: 600px; margin: 0 auto; padding: 1rem;">
-    <h2 style="color: #0d47a1;">New Tender Published</h2>
-    <p>Hello {% if user.first_name %}{{ user.first_name }}{% else %}there{% endif %},</p>
-    <p>A new tender matching your subscription has been published:</p>
-    <ul>
-        <li><strong>Title:</strong> {{ tender.title }}</li>
-        <li><strong>Reference:</strong> {{ tender.reference_number }}</li>
-        <li><strong>Deadline:</strong> {{ tender.submission_deadline|date:"F j, Y H:i" }}</li>
-    </ul>
-    <p>{{ tender.description|default:"No additional description."|truncatewords:50 }}</p>
-    <p>Log in to BidsConnect to view full details and submit a bid.</p>
-    <p style="margin-top: 2rem; color: #666; font-size: 0.9rem;">— BidsConnect</p>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f6f8; line-height: 1.6; color: #1a1a2e;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f6f8; padding: 24px 16px;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); overflow: hidden;">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%); padding: 24px 28px; text-align: center;">
+                            <h1 style="margin: 0; font-size: 1.35rem; font-weight: 700; color: #ffffff; letter-spacing: -0.02em;">BidsConnect</h1>
+                            <p style="margin: 6px 0 0 0; font-size: 0.875rem; color: rgba(255,255,255,0.9);">Tender &amp; Bidding Platform</p>
+                        </td>
+                    </tr>
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 28px;">
+                            <h2 style="margin: 0 0 8px 0; font-size: 1.25rem; font-weight: 600; color: #0d47a1;">New Tender Published</h2>
+                            <p style="margin: 0 0 20px 0; font-size: 0.9375rem; color: #64748b;">Hello {% if user.first_name %}{{ user.first_name }}{% else %}there{% endif %},</p>
+                            <p style="margin: 0 0 20px 0; font-size: 0.9375rem; color: #334155;">A new tender matching your subscription has been published:</p>
+
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin: 0 0 20px 0; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+                                <tr>
+                                    <td style="padding: 14px 16px; background-color: #f8fafc; font-size: 0.8125rem; font-weight: 600; color: #475569;">Title</td>
+                                    <td style="padding: 14px 16px; background-color: #ffffff; font-size: 0.9375rem; color: #1e293b;">{{ tender.title }}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 14px 16px; background-color: #f8fafc; font-size: 0.8125rem; font-weight: 600; color: #475569;">Reference</td>
+                                    <td style="padding: 14px 16px; background-color: #ffffff; font-size: 0.9375rem; color: #1e293b;">{{ tender.reference_number }}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 14px 16px; background-color: #f8fafc; font-size: 0.8125rem; font-weight: 600; color: #475569;">Deadline</td>
+                                    <td style="padding: 14px 16px; background-color: #ffffff; font-size: 0.9375rem; color: #1e293b;">{{ tender.submission_deadline|date:"F j, Y H:i" }}</td>
+                                </tr>
+                            </table>
+
+                            <p style="margin: 0 0 24px 0; font-size: 0.9375rem; color: #475569;">{{ tender.description|default:"No additional description."|truncatewords:50 }}</p>
+
+                            {% if site_url %}
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0;">
+                                        <a href="{{ site_url }}/tenders/{{ tender.slug }}/" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%); color: #ffffff; font-size: 0.9375rem; font-weight: 600; text-decoration: none; border-radius: 8px;">View Tender &amp; Submit Bid</a>
+                                    </td>
+                                </tr>
+                            </table>
+                            {% else %}
+                            <p style="margin: 0; font-size: 0.9375rem; color: #475569;">Log in to BidsConnect to view full details and submit a bid.</p>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 20px 28px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
+                            <p style="margin: 0; font-size: 0.8125rem; color: #64748b;">— BidsConnect · Tanzania Tender &amp; Bidding Platform</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>

@@ -420,9 +420,11 @@ Content-Type: application/json
 ```
 
 - `tender_id`: ID of the tender.
-- `company_id`: UUID of the company (must be one the user can bid for).
+- `company_id`: UUID of a **company the user is a member of**; the API only accepts companies the user belongs to. Creating a bid for another company returns 400. Only one bid per (tender, company); duplicate returns 400 with `{"detail": "Your company already has a bid for this tender."}`.
 - At least one of `file`, `company_document`, or `company_certification` per document response if the API requires it (see BidDocumentSerializer).
 - `jv_contribution`: if provided, must be between 0 and 100.
+
+**List bids:** Non-staff users only see bids for their companies. Use optional `?tender=`, `?status=`, `?company_id=` to filter.
 
 ---
 
@@ -435,6 +437,22 @@ Content-Type: application/json
 ```
 
 **Body:** Empty `{}` or no body. The backend validates and changes status to submitted.
+
+**Validation failure (400):** The API returns `{"detail": "<summary>", "errors": ["error1", "error2", ...]}`. Use `errors` to show a checklist or per-item messages. You can call `GET /api/v1/bids/{bid_id}/validate-submit/` before submit to get `is_ready` and `errors` without submitting.
+
+---
+
+### Accept invitation
+
+```http
+POST /api/v1/accounts/invitations/accept/{token}/
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+- The **logged-in user’s email** must match the invitation’s `invited_email`; otherwise the API returns **403** with `{"detail": "This invitation was sent to a different email address."}`. Direct the user to log in with the invited email.
+- If the company has reached its member limit, the API returns **400** with `{"detail": "Company user limit reached."}`.
+- On success: `{"detail": "Successfully joined {company name}."}`
 
 ---
 
@@ -459,12 +477,17 @@ Content-Type: application/json
 
 ---
 
-### Document expiry webhook (no auth)
+### Document expiry webhook
 
 ```http
 POST /api/v1/accounts/webhooks/documents/expiry/
 Content-Type: application/json
 ```
+
+**Authentication:** When the server has `DOCUMENT_EXPIRY_WEBHOOK_SECRET` set (e.g. in production), include one of these headers or the request will get **401**:
+
+- `X-Webhook-Secret: <secret>`
+- `Authorization: Bearer <secret>`
 
 **Body (JSON) – one or both:**
 
@@ -490,6 +513,12 @@ Content-Type: application/json
 
 ---
 
+### Create tender
+
+Only **staff** or users who are **owner** or **admin** of at least one company can create or update tenders. Others get **403** on POST/PUT/PATCH to `/tenders/tenders/`.
+
+---
+
 ### List/filter tenders
 
 ```http
@@ -498,6 +527,20 @@ Authorization: Bearer <token>
 ```
 
 Query params (all optional): `status`, `category` (slug), `subcategory` (slug).
+
+---
+
+### Tender notifications (mark as read)
+
+```http
+GET /api/v1/tenders/tender-notifications/
+PATCH /api/v1/tenders/tender-notifications/{id}/
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+- **GET** returns the user’s tender notifications (via subscriptions); each has `is_read`.
+- **PATCH** with `{"is_read": true}` marks a notification as read.
 
 ---
 
@@ -524,13 +567,13 @@ Do **not** set `Content-Type: application/json` for requests that send `FormData
 
 ## 7. Errors
 
-- **400 Bad Request:** Validation errors; response body is an object, often `{ "field_name": ["error message"] }` or `{ "detail": "message" }`.
-- **401 Unauthorized:** Missing or invalid token; refresh the token and retry.
-- **403 Forbidden:** Authenticated but not allowed (e.g. not company owner).
+- **400 Bad Request:** Validation errors; response body is often `{ "field_name": ["error message"] }` or `{ "detail": "message" }`. For bid submit validation, the API returns `{ "detail": "...", "errors": ["...", "..."] }`; use `errors` for a list of issues.
+- **401 Unauthorized:** Missing or invalid JWT; refresh the token and retry. For the document expiry webhook, invalid or missing webhook secret also returns 401.
+- **403 Forbidden:** Authenticated but not allowed (e.g. not company owner, invitation sent to another email, or not staff/company admin when creating tenders).
 - **404 Not Found:** Wrong URL or resource does not exist.
 - **500 Server Error:** Backend error; check response body and logs.
 
-Always check `res.ok` / `response.status` and parse the JSON body for error details before showing a message to the user.
+**Convention:** Prefer `detail` for a single message and `errors` for a list of validation messages. Always check `res.ok` / `response.status` and parse the JSON body before showing a message to the user.
 
 ---
 

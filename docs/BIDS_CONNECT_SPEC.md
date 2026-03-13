@@ -31,7 +31,7 @@ This document captures product requirements, user journeys, and tender/bid rules
 
 ### Tenders visibility
 
-- Tenders can be **opened** (created/edited) by **admin** and **company admins**.
+- Tenders can be **opened** (created/edited) by **admin** (staff) and **company admins** (users who are owner or admin of at least one company). The API enforces this: others get 403 on create/update. See [API.md](API.md) and [FRONTEND_INTEGRATION.md](FRONTEND_INTEGRATION.md).
 
 ---
 
