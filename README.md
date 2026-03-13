@@ -106,6 +106,7 @@ New tests cover: invitation accept (email match and company limit), document exp
 | [User Journeys](docs/USER_JOURNEYS.md) | Five flows: onboarding, team, applying for tender, marketplace advertising, RFQ (steps + API hints) |
 | [Frontend Integration](docs/FRONTEND_INTEGRATION.md) | How to consume the API from the frontend, what data to pass, fetch/axios examples |
 | [Product feature suggestions](docs/PRODUCT_FEATURE_SUGGESTIONS.md) | UX and product design ideas (onboarding, payments, reminders, trust, quick wins) |
+| [Changelog](docs/CHANGELOG.md) | Summary of backend changes, security fixes, and API behavior updates |
 
 ## Authentication
 
