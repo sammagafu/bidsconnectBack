@@ -16,8 +16,9 @@ SECRET_KEY = 'django-insecure-^25!+&(b68a4s!^ie%0w9-^y96!z3if%vrc8elno6e=!#rq9dm
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    '178.128.143.28',
+    'http://157.245.38.27',
     'bidsconnect.co.tz',
+    'api.bidsconnect.co.tz',
     'www.bidsconnect.co.tz',
     'localhost',
     '127.0.0.1',
