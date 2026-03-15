@@ -17,9 +17,12 @@ DEBUG = True
 
 ALLOWED_HOSTS = [
     'http://157.245.38.27',
-    'bidsconnect.co.tz',
-    'api.bidsconnect.co.tz',
-    'www.bidsconnect.co.tz',
+    'http://bidsconnect.co.tz',
+    'https://www.bidsconnect.co.tz',
+    'http://api.bidsconnect.co.tz',
+    'https://api.bidsconnect.co.tz',
+    'http://www.bidsconnect.co.tz',
+    'https://www.bidsconnect.co.tz',
     'localhost',
     '127.0.0.1',
 ]
