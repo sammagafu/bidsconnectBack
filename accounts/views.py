@@ -57,7 +57,7 @@ from .serializers import (
     CompanyExperienceSerializer,
     AuditLogSerializer,
 )
-from .permissions import IsCompanyOwner, IsCompanyAdminOrOwner
+from .permissions import IsCompanyOwner, IsCompanyAdminOrOwner, IsCompanyMember
 from .constants import (
     MAX_COMPANY_USERS,
     MAX_COMPANIES_PER_USER,
