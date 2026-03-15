@@ -20,6 +20,7 @@ ALLOWED_HOSTS = [
     'http://bidsconnect.co.tz',
     'https://www.bidsconnect.co.tz',
     'http://api.bidsconnect.co.tz',
+    'api.bidsconnect.co.tz',
     'https://api.bidsconnect.co.tz',
     'http://www.bidsconnect.co.tz',
     'https://www.bidsconnect.co.tz',
